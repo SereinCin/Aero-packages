@@ -1,0 +1,152 @@
+// aero-serde-derive
+// Runtime "derive" helpers for pure-Aero programs (self-contained).
+// Given a struct's field names (comma-separated) and parallel values, these
+// helpers build tagged objects, extract individual fields, and can generate
+// serialization source text for code-gen style use.
+
+// Number of fields in a comma-separated field list.
+fn derive_field_count(fields: str) -> i64 {
+    if (len(fields) == 0) {
+        return 0;
+    }
+    let src = String::from(fields);
+    let n = src.len();
+    let mut count = 1;
+    let mut i = 0;
+    while (i < n) {
+        if (src.at(i) == 44) {
+            count = count + 1;
+        }
+        i = i + 1;
+    }
+    return count;
+}
+
+// The n-th field name (0-based) of a comma-separated list.
+fn derive_field(fields: str, index: i64) -> str {
+    let src = String::from(fields);
+    let n = src.len();
+    let mut count = 0;
+    let mut start = 0;
+    let mut i = 0;
+    while (i <= n) {
+        if ((i == n) || (src.at(i) == 44)) {
+            if (count == index) {
+                return substr(fields, start, i);
+            }
+            count = count + 1;
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+// Join comma-separated field names with 0x1F (unit separator) for iteration.
+fn derive_join(fields: str) -> str {
+    let src = String::from(fields);
+    let n = src.len();
+    let mut out = "";
+    let mut i = 0;
+    while (i < n) {
+        let c = src.at(i);
+        if (c == 44) {
+            out = out + format("%c", 31);
+        } else {
+            out = out + format("%c", c);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// Build a RON-style object: `Name( key: value, ... )`.
+fn derive_object(name: str, keys: Vec<String>, vals: Vec<String>) -> str {
+    let mut out = name + "( ";
+    let mut i = 0;
+    while (i < keys.len()) {
+        if (i > 0) {
+            out = out + ", ";
+        }
+        let mut k = "";
+        let mut j = 0;
+        while (j < keys.get(i).len()) {
+            k = k + format("%c", keys.get(i).at(j));
+            j = j + 1;
+        }
+        let mut v = "";
+        j = 0;
+        while (j < vals.get(i).len()) {
+            v = v + format("%c", vals.get(i).at(j));
+            j = j + 1;
+        }
+        out = out + k + ": " + v;
+        i = i + 1;
+    }
+    out = out + " )";
+    return out;
+}
+
+// Generate a `serialize_<name>` source function body for a field list.
+// Returns the full function source text as a string (code-gen helper).
+fn derive_serialize_source(name: str, fields: str) -> str {
+    let mut src = "fn serialize_" + name + "(obj: str) -> str {\n";
+    src = src + "    let keys = \"" + fields + "\";\n";
+    src = src + "    let vals = obj;\n";
+    src = src + "    return derive_object(\"" + name + "\", keys, vals);\n";
+    src = src + "}\n";
+    return src;
+}
+
+// Split a RON object body into `key: value` records joined by 0x1F.
+fn derive_parse_entries(body: str) -> str {
+    let src = String::from(body);
+    let n = src.len();
+    let mut out = "";
+    let mut depth = 0;
+    let mut in_s = 0;
+    let mut i = 0;
+    while (i < n) {
+        let c = src.at(i);
+        if (c == 34) {
+            in_s = 1 - in_s;
+            out = out + format("%c", c);
+        } else if (in_s == 1) {
+            out = out + format("%c", c);
+        } else if (c == 40) {
+            depth = depth + 1;
+            out = out + format("%c", c);
+        } else if (c == 41) {
+            depth = depth - 1;
+            out = out + format("%c", c);
+        } else if ((c == 44) && (depth == 0)) {
+            out = out + format("%c", 31);
+        } else {
+            out = out + format("%c", c);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn test_serde_derive_basic() -> bool {
+    if (derive_field_count("name,age,score") != 3) {
+        return false;
+    }
+    if (str_cmp(derive_field("name,age", 1), "age") != 0) {
+        return false;
+    }
+    let mut expect = "a" + format("%c", 31) + "b" + format("%c", 31) + "c";
+    if (str_cmp(derive_join("a,b,c"), expect) != 0) {
+        return false;
+    }
+    // source generation contains the struct name
+    let src = derive_serialize_source("Point", "x,y");
+    if (str_find(src, "serialize_Point") < 0) {
+        return false;
+    }
+    if (str_find(src, "x,y") < 0) {
+        return false;
+    }
+    return true;
+}

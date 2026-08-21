@@ -1,0 +1,167 @@
+// aero-flatbuffers
+// A byte-buffer primitive layer in the spirit of FlatBuffers for pure-Aero
+// programs (self-contained). Provides little-endian scalar append/read, a
+// length-prefixed string, and a small read/write cursor abstraction. No
+// vtables/offets tables — just the buffer mechanics the builder would use.
+
+// Create an empty buffer.
+fn flat_new() -> str {
+    return "";
+}
+
+// 256^i
+fn flat_pow256(i: i64) -> i64 {
+    let mut p = 1;
+    let mut k = 0;
+    while (k < i) {
+        p = p * 256;
+        k = k + 1;
+    }
+    return p;
+}
+
+// Append one byte.
+fn flat_push_u8(buf: str, v: i64) -> str {
+    return buf + format("%c", v % 256);
+}
+
+// Append a little-endian u16.
+fn flat_push_u16(buf: str, v: i64) -> str {
+    let mut out = buf;
+    let mut i = 0;
+    while (i < 2) {
+        let b = (v >> (i * 8)) % 256;
+        out = out + format("%c", b);
+        i = i + 1;
+    }
+    return out;
+}
+
+// Append a little-endian u32.
+fn flat_push_u32(buf: str, v: i64) -> str {
+    let mut out = buf;
+    let mut i = 0;
+    while (i < 4) {
+        let b = (v >> (i * 8)) % 256;
+        out = out + format("%c", b);
+        i = i + 1;
+    }
+    return out;
+}
+
+// Append a little-endian i64.
+fn flat_push_i64(buf: str, v: i64) -> str {
+    let mut out = buf;
+    let mut i = 0;
+    while (i < 8) {
+        let b = (v >> (i * 8)) % 256;
+        out = out + format("%c", b);
+        i = i + 1;
+    }
+    return out;
+}
+
+// Append a length-prefixed string: u32 LE length + UTF-8 bytes.
+fn flat_push_string(buf: str, s: str) -> str {
+    return flat_push_u32(buf, len(s)) + s;
+}
+
+// Read one byte at an offset.
+fn flat_read_u8(buf: str, off: i64) -> i64 {
+    return String::from(buf).at(off) % 256;
+}
+
+// Read a little-endian u16 at an offset.
+fn flat_read_u16(buf: str, off: i64) -> i64 {
+    let src = String::from(buf);
+    let mut v = 0;
+    let mut i = 0;
+    while (i < 2) {
+        v = v + (src.at(off + i) % 256) * flat_pow256(i);
+        i = i + 1;
+    }
+    return v;
+}
+
+// Read a little-endian u32 at an offset.
+fn flat_read_u32(buf: str, off: i64) -> i64 {
+    let src = String::from(buf);
+    let mut v = 0;
+    let mut i = 0;
+    while (i < 4) {
+        v = v + (src.at(off + i) % 256) * flat_pow256(i);
+        i = i + 1;
+    }
+    return v;
+}
+
+// Read a little-endian i64 at an offset (non-negative values only).
+fn flat_read_i64(buf: str, off: i64) -> i64 {
+    let src = String::from(buf);
+    let mut v = 0;
+    let mut i = 0;
+    while (i < 8) {
+        v = v + (src.at(off + i) % 256) * flat_pow256(i);
+        i = i + 1;
+    }
+    return v;
+}
+
+// Read a length-prefixed string: returns the raw string and the offset just
+// past its payload.
+struct FlatStr {
+    value: str,
+    pos: i64,
+}
+
+fn flat_read_string(buf: str, off: i64) -> FlatStr {
+    let n = flat_read_u32(buf, off);
+    return FlatStr { value: substr(buf, off + 4, off + 4 + n), pos: off + 4 + n };
+}
+
+fn flat_len(buf: str) -> i64 {
+    return len(buf);
+}
+
+// A simple read cursor over a buffer.
+struct FlatCursor {
+    buf: str,
+    pos: i64,
+}
+
+fn flat_cursor_new(buf: str) -> FlatCursor {
+    return FlatCursor { buf: buf, pos: 0 };
+}
+
+fn flat_cursor_u32(c: &FlatCursor) -> FlatCursor {
+    return FlatCursor { buf: c.buf, pos: c.pos + 4 };
+}
+
+fn test_flatbuffers_basic() -> bool {
+    // i64 round-trip
+    let mut b = flat_new();
+    b = flat_push_i64(b, 16909060);
+    if (flat_len(b) != 8) {
+        return false;
+    }
+    if (flat_read_i64(b, 0) != 16909060) {
+        return false;
+    }
+    // u16 round-trip
+    let mut b2 = flat_new();
+    b2 = flat_push_u16(b2, 4660);
+    if (flat_read_u16(b2, 0) != 4660) {
+        return false;
+    }
+    // string round-trip
+    let mut b3 = flat_new();
+    b3 = flat_push_string(b3, "hello");
+    let s = flat_read_string(b3, 0);
+    if (str_cmp(s.value, "hello") != 0) {
+        return false;
+    }
+    if (s.pos != flat_len(b3)) {
+        return false;
+    }
+    return true;
+}

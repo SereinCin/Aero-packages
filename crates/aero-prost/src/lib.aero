@@ -1,0 +1,167 @@
+// aero-prost
+// Protobuf wire-format subset for pure-Aero programs (self-contained).
+// Covers varints, field keys, and the int32/int64/string field encodings.
+// No generated code / descriptors: callers build fields by hand.
+
+// Wire types.
+fn prost_wire_varint() -> i64 { return 0; }
+fn prost_wire_fixed64() -> i64 { return 1; }
+fn prost_wire_len() -> i64 { return 2; }
+
+// Encode a non-negative integer as a base-128 varint.
+fn prost_varint_encode(v: i64) -> str {
+    let mut out = "";
+    let mut x = v;
+    let mut done = 0;
+    while (done == 0) {
+        let mut b = x % 128;
+        x = x / 128;
+        if (x == 0) {
+            done = 1;
+        } else {
+            b = b + 128;
+        }
+        out = out + format("%c", b);
+    }
+    return out;
+}
+
+struct VarInt {
+    val: i64,
+    pos: i64,
+}
+
+// Decode a varint starting at `pos`.
+fn prost_varint_decode(s: str, pos: i64) -> VarInt {
+    let src = String::from(s);
+    let n = len(s);
+    let mut val = 0;
+    let mut mult = 1;
+    let mut p = pos;
+    let mut done = 0;
+    while ((p < n) && (done == 0)) {
+        let b = src.at(p) % 128;
+        val = val + b * mult;
+        if (src.at(p) < 128) {
+            done = 1;
+        }
+        mult = mult * 128;
+        p = p + 1;
+    }
+    return VarInt { val: val, pos: p };
+}
+
+// Combined field key: (field << 3) | wire_type.
+fn prost_key(field: i64, wire: i64) -> i64 {
+    return field * 8 + wire;
+}
+
+fn prost_key_field(tag: i64) -> i64 {
+    return tag / 8;
+}
+
+fn prost_key_wire(tag: i64) -> i64 {
+    return tag % 8;
+}
+
+// Encode a varint field: `key(value)`.
+fn prost_int_encode(field: i64, v: i64) -> str {
+    return prost_varint_encode(prost_key(field, 0)) + prost_varint_encode(v);
+}
+
+// Encode a length-delimited string field: `key len bytes`.
+fn prost_string_encode(field: i64, s: str) -> str {
+    return prost_varint_encode(prost_key(field, 2)) + prost_varint_encode(len(s)) + s;
+}
+
+// Encode an empty length-delimited field (e.g. bytes="").
+fn prost_bytes_encode(field: i64, data: str) -> str {
+    return prost_varint_encode(prost_key(field, 2)) + prost_varint_encode(len(data)) + data;
+}
+
+struct ProstField {
+    field: i64,
+    wire: i64,
+    value: i64,
+    pos: i64,
+}
+
+// Read one field from a buffer; `value` is the varint value for wire=0 and the
+// byte length for wire=2 (the payload itself is skipped).
+fn prost_read_field(s: str, pos: i64) -> ProstField {
+    let tag = prost_varint_decode(s, pos);
+    let field = tag.val / 8;
+    let wire = tag.val % 8;
+    let mut value = 0;
+    let mut npos = tag.pos;
+    if (wire == 0) {
+        let vi = prost_varint_decode(s, tag.pos);
+        value = vi.val;
+        npos = vi.pos;
+    } else if (wire == 2) {
+        let vi = prost_varint_decode(s, tag.pos);
+        value = vi.val;
+        npos = vi.pos + value;
+    }
+    return ProstField { field: field, wire: wire, value: value, pos: npos };
+}
+
+// Skip over every field in a buffer and return the end offset.
+fn prost_skip_all(s: str) -> i64 {
+    let n = len(s);
+    let mut pos = 0;
+    let mut done = 0;
+    while ((pos < n) && (done == 0)) {
+        let f = prost_read_field(s, pos);
+        if (f.pos <= pos) {
+            done = 1;
+        } else {
+            pos = f.pos;
+        }
+    }
+    return pos;
+}
+
+fn test_prost_basic() -> bool {
+    if (str_cmp(prost_varint_encode(0), format("%c", 0)) != 0) {
+        return false;
+    }
+    if (str_cmp(prost_varint_encode(300), format("%c", 172) + format("%c", 2)) != 0) {
+        return false;
+    }
+    let vi = prost_varint_decode(format("%c", 172) + format("%c", 2), 0);
+    if (vi.val != 300) {
+        return false;
+    }
+    if (prost_key(3, 0) != 24) {
+        return false;
+    }
+    if (prost_key_field(24) != 3) {
+        return false;
+    }
+    if (prost_key_wire(24) != 0) {
+        return false;
+    }
+    // encode field 1 = "hello" (wire 2), then read it back
+    let buf = prost_string_encode(1, "hello");
+    let f = prost_read_field(buf, 0);
+    if (f.field != 1) {
+        return false;
+    }
+    if (f.wire != 2) {
+        return false;
+    }
+    if (f.value != 5) {
+        return false;
+    }
+    // encode field 2 = 42 (varint), read back
+    let buf2 = prost_int_encode(2, 42);
+    let f2 = prost_read_field(buf2, 0);
+    if (f2.field != 2) {
+        return false;
+    }
+    if (f2.value != 42) {
+        return false;
+    }
+    return true;
+}

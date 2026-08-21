@@ -1,0 +1,181 @@
+// aero-skiplist
+// An ordered skip list of i64 for pure-Aero programs (self-contained). The
+// next-pointer table is flattened: `next[i * MAXLV + layer]` holds the index
+// of node i's successor on `layer`. Node 0 is the sentinel head.
+
+const SKIP_MAXLV: i64 = 8;
+
+struct SkipList {
+    vals: Vec<i64>,
+    next: Vec<i64>,
+    lv: Vec<i64>,
+    len: i64,
+}
+
+fn skip_new() -> SkipList {
+    let mut sl = SkipList { vals: Vec::new(), next: Vec::new(), lv: Vec::new(), len: 0 };
+    sl.vals.push(-1);
+    sl.lv.push(SKIP_MAXLV);
+    let mut k = 0;
+    while (k < SKIP_MAXLV) {
+        sl.next.push(0);
+        k = k + 1;
+    }
+    return sl;
+}
+
+// Deterministic "random" level (kept small and fixed for reproducibility).
+fn skip_rand_lv() -> i64 {
+    return 2;
+}
+
+// Find, for each layer, the rightmost node whose value is < v. Returns the
+// predecessors as a fresh Vec<i64> of length MAXLV.
+fn skip_find_pred(sl: &mut SkipList, v: i64) -> Vec<i64> {
+    let mut preds: Vec<i64> = Vec::new();
+    let mut k = 0;
+    while (k < SKIP_MAXLV) {
+        preds.push(0);
+        k = k + 1;
+    }
+    let mut x = 0;
+    let mut layer = SKIP_MAXLV - 1;
+    while (layer >= 0) {
+        let mut done = 0;
+        while (done == 0) {
+            let nx = sl.next.get(x * SKIP_MAXLV + layer);
+            if ((nx != 0) && (sl.vals.get(nx) < v)) {
+                x = nx;
+            } else {
+                done = 1;
+            }
+        }
+        preds.set(layer, x);
+        layer = layer - 1;
+    }
+    return preds;
+}
+
+fn skip_len(sl: &SkipList) -> i64 {
+    return sl.len;
+}
+
+fn skip_is_empty(sl: &SkipList) -> bool {
+    return sl.len == 0;
+}
+
+// Insert a value (duplicates are ignored).
+fn skip_insert(sl: &mut SkipList, v: i64) {
+    let preds = skip_find_pred(sl, v);
+    let nxt = sl.next.get(preds.get(0) * SKIP_MAXLV + 0);
+    if ((nxt != 0) && (sl.vals.get(nxt) == v)) {
+        return;
+    }
+    let lv = skip_rand_lv();
+    sl.vals.push(v);
+    sl.lv.push(lv);
+    let new = sl.vals.len() - 1;
+    let base = new * SKIP_MAXLV;
+    let mut k = 0;
+    while (k < SKIP_MAXLV) {
+        sl.next.push(0);
+        k = k + 1;
+    }
+    k = 0;
+    while (k < lv) {
+        let p = preds.get(k);
+        sl.next.set(base + k, sl.next.get(p * SKIP_MAXLV + k));
+        sl.next.set(p * SKIP_MAXLV + k, new);
+        k = k + 1;
+    }
+    sl.len = sl.len + 1;
+}
+
+fn skip_search(sl: &SkipList, v: i64) -> bool {
+    let mut x = 0;
+    let mut layer = SKIP_MAXLV - 1;
+    while (layer >= 0) {
+        let mut done = 0;
+        while (done == 0) {
+            let nx = sl.next.get(x * SKIP_MAXLV + layer);
+            if ((nx != 0) && (sl.vals.get(nx) <= v)) {
+                if (sl.vals.get(nx) == v) {
+                    return true;
+                }
+                x = nx;
+            } else {
+                done = 1;
+            }
+        }
+        layer = layer - 1;
+    }
+    return false;
+}
+
+// Remove a value; returns 1 when it was present.
+fn skip_remove(sl: &mut SkipList, v: i64) -> i64 {
+    let preds = skip_find_pred(sl, v);
+    let nxt = sl.next.get(preds.get(0) * SKIP_MAXLV + 0);
+    if ((nxt == 0) || (sl.vals.get(nxt) != v)) {
+        return 0;
+    }
+    let lv = sl.lv.get(nxt);
+    let mut k = 0;
+    while (k < lv) {
+        let p = preds.get(k);
+        sl.next.set(p * SKIP_MAXLV + k, sl.next.get(nxt * SKIP_MAXLV + k));
+        k = k + 1;
+    }
+    sl.len = sl.len - 1;
+    return 1;
+}
+
+// Sorted comma-separated rendering (walk layer 0).
+fn skip_to_str(sl: &SkipList) -> str {
+    let mut out = "";
+    let mut x = sl.next.get(0);
+    while (x != 0) {
+        if (len(out) > 0) {
+            out = out + ",";
+        }
+        out = out + format("%lld", sl.vals.get(x));
+        x = sl.next.get(x * SKIP_MAXLV + 0);
+    }
+    return out;
+}
+
+fn test_skiplist_basic() -> bool {
+    let mut sl = skip_new();
+    skip_insert(&mut sl, 5);
+    skip_insert(&mut sl, 1);
+    skip_insert(&mut sl, 9);
+    skip_insert(&mut sl, 3);
+    skip_insert(&mut sl, 7);
+    skip_insert(&mut sl, 3);
+    if (skip_len(&sl) != 5) {
+        return false;
+    }
+    if (skip_search(&sl, 7)) {
+    } else {
+        return false;
+    }
+    if (skip_search(&sl, 2)) {
+        return false;
+    }
+    if (str_cmp(skip_to_str(&sl), "1,3,5,7,9") != 0) {
+        return false;
+    }
+    if (skip_remove(&mut sl, 5) != 1) {
+        return false;
+    }
+    if (skip_search(&sl, 5)) {
+        return false;
+    }
+    if (skip_remove(&mut sl, 99) != 0) {
+        return false;
+    }
+    if (str_cmp(skip_to_str(&sl), "1,3,7,9") != 0) {
+        return false;
+    }
+    return true;
+}

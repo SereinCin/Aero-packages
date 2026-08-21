@@ -1,0 +1,245 @@
+// aero-bitset
+// A fixed-size bit set for pure-Aero programs (self-contained). Bits are
+// packed 64 per i64 word. Provides membership, union / intersection /
+// difference, cardinality and rendering.
+
+struct BitSet {
+    data: Vec<i64>,
+    len: i64,
+}
+
+fn bs_pow2(n: i64) -> i64 {
+    let mut p = 1;
+    let mut k = 0;
+    while (k < n) {
+        p = p * 2;
+        k = k + 1;
+    }
+    return p;
+}
+
+// Create a set with bits 0..len all clear.
+fn bitset_new(len: i64) -> BitSet {
+    let mut d = Vec::new();
+    let words = (len + 63) / 64;
+    let mut i = 0;
+    while (i < words) {
+        d.push(0);
+        i = i + 1;
+    }
+    return BitSet { data: d, len: len };
+}
+
+fn bitset_len(bs: &BitSet) -> i64 {
+    return bs.len;
+}
+
+fn bitset_set(bs: &mut BitSet, i: i64) {
+    if ((i < 0) || (i >= bs.len)) {
+        return;
+    }
+    let word = i / 64;
+    let bit = i % 64;
+    let cur = bs.data.get(word);
+    if ((cur / bs_pow2(bit)) % 2 == 0) {
+        bs.data.set(word, cur + bs_pow2(bit));
+    }
+}
+
+fn bitset_clear(bs: &mut BitSet, i: i64) {
+    if ((i < 0) || (i >= bs.len)) {
+        return;
+    }
+    let word = i / 64;
+    let bit = i % 64;
+    let cur = bs.data.get(word);
+    if ((cur / bs_pow2(bit)) % 2 == 1) {
+        bs.data.set(word, cur - bs_pow2(bit));
+    }
+}
+
+fn bitset_toggle(bs: &mut BitSet, i: i64) {
+    if ((i < 0) || (i >= bs.len)) {
+        return;
+    }
+    let word = i / 64;
+    let bit = i % 64;
+    let cur = bs.data.get(word);
+    if ((cur / bs_pow2(bit)) % 2 == 1) {
+        bs.data.set(word, cur - bs_pow2(bit));
+    } else {
+        bs.data.set(word, cur + bs_pow2(bit));
+    }
+}
+
+fn bitset_has(bs: &BitSet, i: i64) -> bool {
+    if ((i < 0) || (i >= bs.len)) {
+        return false;
+    }
+    let word = i / 64;
+    let bit = i % 64;
+    return (bs.data.get(word) / bs_pow2(bit)) % 2 == 1;
+}
+
+// Per-word bitwise OR (no arithmetic carries: rebuilt bit by bit).
+fn bs_or(a: i64, b: i64) -> i64 {
+    let mut out = 0;
+    let mut k = 0;
+    while (k < 64) {
+        let ba = (a / bs_pow2(k)) % 2;
+        let bb = (b / bs_pow2(k)) % 2;
+        if ((ba == 1) || (bb == 1)) {
+            out = out + bs_pow2(k);
+        }
+        k = k + 1;
+    }
+    return out;
+}
+
+fn bs_and(a: i64, b: i64) -> i64 {
+    let mut out = 0;
+    let mut k = 0;
+    while (k < 64) {
+        let ba = (a / bs_pow2(k)) % 2;
+        let bb = (b / bs_pow2(k)) % 2;
+        if ((ba == 1) && (bb == 1)) {
+            out = out + bs_pow2(k);
+        }
+        k = k + 1;
+    }
+    return out;
+}
+
+fn bs_diff(a: i64, b: i64) -> i64 {
+    let mut out = 0;
+    let mut k = 0;
+    while (k < 64) {
+        let ba = (a / bs_pow2(k)) % 2;
+        let bb = (b / bs_pow2(k)) % 2;
+        if ((ba == 1) && (bb == 0)) {
+            out = out + bs_pow2(k);
+        }
+        k = k + 1;
+    }
+    return out;
+}
+
+fn bitset_union(a: &BitSet, b: &BitSet) -> BitSet {
+    let mut out = bitset_new(a.len);
+    let mut i = 0;
+    while (i < out.data.len()) {
+        let bv = 0;
+        if (i < b.data.len()) {
+            out.data.set(i, bs_or(a.data.get(i), b.data.get(i)));
+        } else {
+            out.data.set(i, a.data.get(i));
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn bitset_intersection(a: &BitSet, b: &BitSet) -> BitSet {
+    let mut out = bitset_new(a.len);
+    let mut i = 0;
+    while (i < out.data.len()) {
+        if (i < b.data.len()) {
+            out.data.set(i, bs_and(a.data.get(i), b.data.get(i)));
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn bitset_difference(a: &BitSet, b: &BitSet) -> BitSet {
+    let mut out = bitset_new(a.len);
+    let mut i = 0;
+    while (i < out.data.len()) {
+        if (i < b.data.len()) {
+            out.data.set(i, bs_diff(a.data.get(i), b.data.get(i)));
+        } else {
+            out.data.set(i, a.data.get(i));
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn bitset_count(bs: &BitSet) -> i64 {
+    let mut c = 0;
+    let mut i = 0;
+    while (i < bs.len) {
+        if (bitset_has(bs, i)) {
+            c = c + 1;
+        }
+        i = i + 1;
+    }
+    return c;
+}
+
+fn bitset_any(bs: &BitSet) -> bool {
+    return bitset_count(bs) > 0;
+}
+
+fn bitset_to_str(bs: &BitSet) -> str {
+    let mut out = "";
+    let mut i = 0;
+    while (i < bs.len) {
+        if (bitset_has(bs, i)) {
+            out = out + "1";
+        } else {
+            out = out + "0";
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn test_bitset_basic() -> bool {
+    let mut a = bitset_new(8);
+    bitset_set(&mut a, 0);
+    bitset_set(&mut a, 3);
+    bitset_set(&mut a, 7);
+    if (bitset_count(&a) != 3) {
+        return false;
+    }
+    if (bitset_has(&a, 3)) {
+    } else {
+        return false;
+    }
+    let mut b = bitset_new(8);
+    bitset_set(&mut b, 3);
+    bitset_set(&mut b, 5);
+    // union = {0,3,5,7}
+    let u = bitset_union(&a, &b);
+    if (bitset_count(&u) != 4) {
+        return false;
+    }
+    // intersection = {3}
+    let i2 = bitset_intersection(&a, &b);
+    if (bitset_count(&i2) != 1) {
+        return false;
+    }
+    if (bitset_has(&i2, 3)) {
+    } else {
+        return false;
+    }
+    // difference a\b = {0,7}
+    let d = bitset_difference(&a, &b);
+    if (bitset_count(&d) != 2) {
+        return false;
+    }
+    if (bitset_has(&d, 0)) {
+    } else {
+        return false;
+    }
+    if (bitset_has(&d, 7)) {
+    } else {
+        return false;
+    }
+    bitset_toggle(&mut a, 3);
+    if (bitset_has(&a, 3)) {
+        return false;
+    }
+    return true;
+}

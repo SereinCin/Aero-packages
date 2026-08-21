@@ -1,0 +1,130 @@
+// aero-ring-buffer
+// A fixed-capacity ring (circular) buffer of i64 for pure-Aero programs
+// (self-contained). Pushing into a full buffer overwrites the oldest item.
+
+struct RingBuffer {
+    data: Vec<i64>,
+    head: i64,
+    count: i64,
+    cap: i64,
+}
+
+fn ring_new(cap: i64) -> RingBuffer {
+    let mut d = Vec::new();
+    let mut i = 0;
+    while (i < cap) {
+        d.push(0);
+        i = i + 1;
+    }
+    return RingBuffer { data: d, head: 0, count: 0, cap: cap };
+}
+
+fn ring_len(rb: &RingBuffer) -> i64 {
+    return rb.count;
+}
+
+fn ring_cap(rb: &RingBuffer) -> i64 {
+    return rb.cap;
+}
+
+fn ring_is_empty(rb: &RingBuffer) -> bool {
+    return rb.count == 0;
+}
+
+fn ring_is_full(rb: &RingBuffer) -> bool {
+    return rb.count == rb.cap;
+}
+
+// Append a value; overwrites the oldest when full.
+fn ring_push(rb: &mut RingBuffer, v: i64) {
+    let idx = (rb.head + rb.count) % rb.cap;
+    rb.data.set(idx, v);
+    if (rb.count < rb.cap) {
+        rb.count = rb.count + 1;
+    } else {
+        rb.head = (rb.head + 1) % rb.cap;
+    }
+}
+
+// Pop the oldest value (0 when empty).
+fn ring_pop(rb: &mut RingBuffer) -> i64 {
+    if (rb.count == 0) {
+        return 0;
+    }
+    let v = rb.data.get(rb.head);
+    rb.head = (rb.head + 1) % rb.cap;
+    rb.count = rb.count - 1;
+    return v;
+}
+
+// Peek the oldest value (0 when empty).
+fn ring_peek(rb: &RingBuffer) -> i64 {
+    if (rb.count == 0) {
+        return 0;
+    }
+    return rb.data.get(rb.head);
+}
+
+// Read the item at logical index `i` (0 = oldest).
+fn ring_get(rb: &RingBuffer, i: i64) -> i64 {
+    if ((i < 0) || (i >= rb.count)) {
+        return 0;
+    }
+    return rb.data.get((rb.head + i) % rb.cap);
+}
+
+fn ring_clear(rb: &mut RingBuffer) {
+    rb.head = 0;
+    rb.count = 0;
+}
+
+// Render all items as a comma-separated list.
+fn ring_to_str(rb: &RingBuffer) -> str {
+    let mut out = "";
+    let mut i = 0;
+    while (i < rb.count) {
+        if (i > 0) {
+            out = out + ",";
+        }
+        out = out + format("%lld", ring_get(rb, i));
+        i = i + 1;
+    }
+    return out;
+}
+
+fn test_ring_basic() -> bool {
+    let mut rb = ring_new(3);
+    ring_push(&mut rb, 1);
+    ring_push(&mut rb, 2);
+    ring_push(&mut rb, 3);
+    if (ring_is_full(&rb)) {
+    } else {
+        return false;
+    }
+    if (ring_len(&rb) != 3) {
+        return false;
+    }
+    // overwrite the oldest (1)
+    ring_push(&mut rb, 4);
+    if (ring_len(&rb) != 3) {
+        return false;
+    }
+    if (str_cmp(ring_to_str(&rb), "2,3,4") != 0) {
+        return false;
+    }
+    if (ring_pop(&mut rb) != 2) {
+        return false;
+    }
+    if (ring_pop(&mut rb) != 3) {
+        return false;
+    }
+    if (ring_peek(&rb) != 4) {
+        return false;
+    }
+    ring_clear(&mut rb);
+    if (ring_is_empty(&rb)) {
+    } else {
+        return false;
+    }
+    return true;
+}

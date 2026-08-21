@@ -1,0 +1,182 @@
+// aero-cbor
+// CBOR (RFC 7049) binary serialization subset for pure-Aero programs
+// (self-contained). Covers unsigned integers, negative integers, text strings
+// and array/map headers with the compact additional-info encodings.
+
+// Major types.
+fn cb_major_uint() -> i64 { return 0; }
+fn cb_major_negint() -> i64 { return 1; }
+fn cb_major_bytes() -> i64 { return 2; }
+fn cb_major_text() -> i64 { return 3; }
+fn cb_major_array() -> i64 { return 4; }
+fn cb_major_map() -> i64 { return 5; }
+
+// Build the initial byte: (major << 5) | additional-info.
+fn cb_head(major: i64, ai: i64) -> str {
+    return format("%c", major * 32 + ai);
+}
+
+fn cb_byte(v: i64, off: i64) -> i64 {
+    return (v >> (off * 8)) % 256;
+}
+
+// Encode an unsigned integer with the smallest fitting representation.
+fn cbor_encode_uint(v: i64) -> str {
+    if (v < 24) {
+        return format("%c", v);
+    }
+    if (v < 256) {
+        return format("%c", 24) + format("%c", cb_byte(v, 0));
+    }
+    if (v < 65536) {
+        return format("%c", 25) + format("%c", cb_byte(v, 1)) + format("%c", cb_byte(v, 0));
+    }
+    if (v < 4294967296) {
+        let mut out = format("%c", 26);
+        let mut i = 3;
+        while (i >= 0) {
+            out = out + format("%c", cb_byte(v, i));
+            i = i - 1;
+        }
+        return out;
+    }
+    let mut out = format("%c", 27);
+    let mut i = 7;
+    while (i >= 0) {
+        out = out + format("%c", cb_byte(v, i));
+        i = i - 1;
+    }
+    return out;
+}
+
+// Encode a negative integer: value = -1 - n, so n = -(value + 1).
+fn cbor_encode_negint(v: i64) -> str {
+    let n = -v - 1;
+    return cbor_encode_uint(n);
+}
+
+// Encode a text string: major=3 with the byte length.
+fn cbor_encode_str(s: str) -> str {
+    let n = len(s);
+    let mut head = "";
+    if (n < 24) {
+        head = format("%c", 3 * 32 + n);
+    } else {
+        head = format("%c", 3 * 32 + 24) + format("%c", cb_byte(n, 0));
+    }
+    return head + s;
+}
+
+// Encode an array header.
+fn cbor_encode_array_header(n: i64) -> str {
+    if (n < 24) {
+        return format("%c", 4 * 32 + n);
+    }
+    return format("%c", 4 * 32 + 24) + format("%c", cb_byte(n, 0));
+}
+
+// Encode a map header.
+fn cbor_encode_map_header(n: i64) -> str {
+    if (n < 24) {
+        return format("%c", 5 * 32 + n);
+    }
+    return format("%c", 5 * 32 + 24) + format("%c", cb_byte(n, 0));
+}
+
+// Decoded value kinds.
+fn cb_kind_uint() -> i64 { return 0; }
+fn cb_kind_negint() -> i64 { return 1; }
+fn cb_kind_bytes() -> i64 { return 2; }
+fn cb_kind_text() -> i64 { return 3; }
+fn cb_kind_array() -> i64 { return 4; }
+fn cb_kind_map() -> i64 { return 5; }
+
+struct CbVal {
+    kind: i64,
+    value: i64,
+    pos: i64,
+}
+
+// Read the additional info and its argument from `pos`; returns kind, value
+// (length for text/array/map) and the position past the header/argument.
+fn cbor_decode(s: str, pos: i64) -> CbVal {
+    let src = String::from(s);
+    let n = len(s);
+    let m = src.at(pos);
+    let major = m / 32;
+    let ai = m % 32;
+    let mut arg = ai;
+    let mut p = pos + 1;
+    if (ai == 24) {
+        arg = src.at(p) % 256;
+        p = p + 1;
+    } else if (ai == 25) {
+        arg = (src.at(p) % 256) * 256 + (src.at(p + 1) % 256);
+        p = p + 2;
+    } else if (ai == 26) {
+        arg = (src.at(p) % 256) * 16777216 + (src.at(p + 1) % 256) * 65536 + (src.at(p + 2) % 256) * 256 + (src.at(p + 3) % 256);
+        p = p + 4;
+    }
+    if (major == 0) {
+        return CbVal { kind: 0, value: arg, pos: p };
+    }
+    if (major == 1) {
+        return CbVal { kind: 1, value: -1 - arg, pos: p };
+    }
+    if (major == 3) {
+        return CbVal { kind: 3, value: arg, pos: p };
+    }
+    if (major == 4) {
+        return CbVal { kind: 4, value: arg, pos: p };
+    }
+    if (major == 5) {
+        return CbVal { kind: 5, value: arg, pos: p };
+    }
+    return CbVal { kind: major, value: arg, pos: p };
+}
+
+// Extract the payload of a text value.
+fn cbor_str_payload(s: str, pos: i64, lenv: i64) -> str {
+    let v = cbor_decode(s, pos);
+    return substr(s, v.pos, v.pos + lenv);
+}
+
+fn test_cbor_basic() -> bool {
+    // uint round-trips
+    if (cbor_decode(cbor_encode_uint(0), 0).value != 0) {
+        return false;
+    }
+    if (cbor_decode(cbor_encode_uint(23), 0).value != 23) {
+        return false;
+    }
+    if (cbor_decode(cbor_encode_uint(24), 0).value != 24) {
+        return false;
+    }
+    if (cbor_decode(cbor_encode_uint(300), 0).value != 300) {
+        return false;
+    }
+    if (cbor_decode(cbor_encode_uint(70000), 0).value != 70000) {
+        return false;
+    }
+    // negative int
+    if (cbor_decode(cbor_encode_negint(-10), 0).value != -10) {
+        return false;
+    }
+    // string round-trip
+    let es = cbor_encode_str("hi");
+    let ds = cbor_decode(es, 0);
+    if (ds.kind != 3) {
+        return false;
+    }
+    if (ds.value != 2) {
+        return false;
+    }
+    if (str_cmp(cbor_str_payload(es, 0, ds.value), "hi") != 0) {
+        return false;
+    }
+    // array header
+    if (cbor_decode(cbor_encode_array_header(3), 0).value != 3) {
+        return false;
+    }
+    return true;
+}

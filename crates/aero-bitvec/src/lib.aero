@@ -1,0 +1,176 @@
+// aero-bitvec
+// A growable bit vector for pure-Aero programs (self-contained). Each element
+// is 0 or 1; bits are packed 64 per i64 word.
+
+struct BitVec {
+    data: Vec<i64>,
+    len: i64,
+}
+
+fn bv_pow2(n: i64) -> i64 {
+    let mut p = 1;
+    let mut k = 0;
+    while (k < n) {
+        p = p * 2;
+        k = k + 1;
+    }
+    return p;
+}
+
+fn bitvec_new() -> BitVec {
+    return BitVec { data: Vec::new(), len: 0 };
+}
+
+fn bitvec_len(bv: &BitVec) -> i64 {
+    return bv.len;
+}
+
+// Append a bit (0 or 1).
+fn bitvec_push(bv: &mut BitVec, b: i64) {
+    let word = bv.len / 64;
+    if (word >= bv.data.len()) {
+        bv.data.push(0);
+    }
+    let bit = bv.len % 64;
+    if (b == 1) {
+        let cur = bv.data.get(word);
+        bv.data.set(word, cur + bv_pow2(bit));
+    }
+    bv.len = bv.len + 1;
+}
+
+// Read the bit at index `i` (0 when out of range).
+fn bitvec_get(bv: &BitVec, i: i64) -> i64 {
+    if ((i < 0) || (i >= bv.len)) {
+        return 0;
+    }
+    let word = i / 64;
+    let bit = i % 64;
+    return (bv.data.get(word) / bv_pow2(bit)) % 2;
+}
+
+// Set the bit at `i` to `b`.
+fn bitvec_set(bv: &mut BitVec, i: i64, b: i64) {
+    if ((i < 0) || (i >= bv.len)) {
+        return;
+    }
+    let word = i / 64;
+    let bit = i % 64;
+    let cur = bv.data.get(word);
+    let m = (cur / bv_pow2(bit)) % 2;
+    if (b == 1) {
+        if (m == 0) {
+            bv.data.set(word, cur + bv_pow2(bit));
+        }
+    } else if (m == 1) {
+        bv.data.set(word, cur - bv_pow2(bit));
+    }
+}
+
+// Flip the bit at `i`.
+fn bitvec_flip(bv: &mut BitVec, i: i64) {
+    if ((i < 0) || (i >= bv.len)) {
+        return;
+    }
+    let word = i / 64;
+    let bit = i % 64;
+    let cur = bv.data.get(word);
+    let m = (cur / bv_pow2(bit)) % 2;
+    if (m == 1) {
+        bv.data.set(word, cur - bv_pow2(bit));
+    } else {
+        bv.data.set(word, cur + bv_pow2(bit));
+    }
+}
+
+// Number of set bits.
+fn bitvec_count(bv: &BitVec) -> i64 {
+    let mut c = 0;
+    let mut i = 0;
+    while (i < bv.len) {
+        c = c + bitvec_get(bv, i);
+        i = i + 1;
+    }
+    return c;
+}
+
+fn bitvec_any(bv: &BitVec) -> bool {
+    let mut i = 0;
+    while (i < bv.len) {
+        if (bitvec_get(bv, i) == 1) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// Render as a "0101..." string.
+fn bitvec_to_str(bv: &BitVec) -> str {
+    let mut out = "";
+    let mut i = 0;
+    while (i < bv.len) {
+        if (bitvec_get(bv, i) == 1) {
+            out = out + "1";
+        } else {
+            out = out + "0";
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// Build from a "0101..." string.
+fn bitvec_from_str(s: str) -> BitVec {
+    let src = String::from(s);
+    let n = len(s);
+    let mut bv = bitvec_new();
+    let mut i = 0;
+    while (i < n) {
+        if (src.at(i) == 49) {
+            bitvec_push(&mut bv, 1);
+        } else {
+            bitvec_push(&mut bv, 0);
+        }
+        i = i + 1;
+    }
+    return bv;
+}
+
+fn test_bitvec_basic() -> bool {
+    let mut bv = bitvec_new();
+    bitvec_push(&mut bv, 1);
+    bitvec_push(&mut bv, 0);
+    bitvec_push(&mut bv, 1);
+    bitvec_push(&mut bv, 1);
+    if (bitvec_len(&bv) != 4) {
+        return false;
+    }
+    if (str_cmp(bitvec_to_str(&bv), "1011") != 0) {
+        return false;
+    }
+    if (bitvec_get(&bv, 2) != 1) {
+        return false;
+    }
+    if (bitvec_count(&bv) != 3) {
+        return false;
+    }
+    bitvec_set(&mut bv, 1, 1);
+    bitvec_set(&mut bv, 2, 0);
+    if (str_cmp(bitvec_to_str(&bv), "1101") != 0) {
+        return false;
+    }
+    bitvec_flip(&mut bv, 0);
+    if (str_cmp(bitvec_to_str(&bv), "0101") != 0) {
+        return false;
+    }
+    // long vector crossing word boundary (64+ bits)
+    let mut long = bitvec_from_str("11111111111111111111111111111111111111111111111111111111111111111");
+    if (bitvec_len(&long) != 65) {
+        return false;
+    }
+    if (bitvec_get(&long, 64) != 1) {
+        return false;
+    }
+    return true;
+}

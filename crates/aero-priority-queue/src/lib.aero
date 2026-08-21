@@ -1,0 +1,167 @@
+// aero-priority-queue
+// A binary-heap priority queue of i64 for pure-Aero programs (self-contained).
+// Supports both min-heap and max-heap ordering.
+
+struct PriQueue {
+    data: Vec<i64>,
+    maxh: i64,   // 1 = max-heap, 0 = min-heap
+}
+
+fn pq_new(maxh: i64) -> PriQueue {
+    return PriQueue { data: Vec::new(), maxh: maxh };
+}
+
+fn pq_len(pq: &PriQueue) -> i64 {
+    return pq.data.len();
+}
+
+fn pq_is_empty(pq: &PriQueue) -> bool {
+    return pq.data.len() == 0;
+}
+
+// Does `a` take priority over `b`?
+fn pq_prior(a: i64, b: i64, maxh: i64) -> i64 {
+    if (maxh == 1) {
+        if (a > b) {
+            return 1;
+        }
+        return 0;
+    }
+    if (a < b) {
+        return 1;
+    }
+    return 0;
+}
+
+fn pq_swim(pq: &mut PriQueue, idx: i64) {
+    let mut i = idx;
+    let mut done = 0;
+    while ((i > 0) && (done == 0)) {
+        let parent = (i - 1) / 2;
+        let a = pq.data.get(i);
+        let b = pq.data.get(parent);
+        if (pq_prior(a, b, pq.maxh) == 1) {
+            pq.data.set(i, b);
+            pq.data.set(parent, a);
+            i = parent;
+        } else {
+            done = 1;
+        }
+    }
+}
+
+fn pq_sink(pq: &mut PriQueue, idx: i64) {
+    let mut i = idx;
+    let n = pq.data.len();
+    let mut done = 0;
+    while (done == 0) {
+        let l = 2 * i + 1;
+        let r = 2 * i + 2;
+        let mut best = i;
+        if (l < n) {
+            if (pq_prior(pq.data.get(l), pq.data.get(best), pq.maxh) == 1) {
+                best = l;
+            }
+        }
+        if (r < n) {
+            if (pq_prior(pq.data.get(r), pq.data.get(best), pq.maxh) == 1) {
+                best = r;
+            }
+        }
+        if (best != i) {
+            let t = pq.data.get(i);
+            pq.data.set(i, pq.data.get(best));
+            pq.data.set(best, t);
+            i = best;
+        } else {
+            done = 1;
+        }
+    }
+}
+
+fn pq_push(pq: &mut PriQueue, v: i64) {
+    pq.data.push(v);
+    pq_swim(pq, pq.data.len() - 1);
+}
+
+struct PqRes {
+    ok: i64,
+    val: i64,
+}
+
+fn pq_peek(pq: &PriQueue) -> PqRes {
+    if (pq.data.len() == 0) {
+        return PqRes { ok: 0, val: 0 };
+    }
+    return PqRes { ok: 1, val: pq.data.get(0) };
+}
+
+// Pop the highest-priority item.
+fn pq_pop(pq: &mut PriQueue) -> PqRes {
+    let n = pq.data.len();
+    if (n == 0) {
+        return PqRes { ok: 0, val: 0 };
+    }
+    let top = pq.data.get(0);
+    let last = pq.data.get(n - 1);
+    pq.data.pop();
+    if (pq.data.len() > 0) {
+        pq.data.set(0, last);
+        pq_sink(pq, 0);
+    }
+    return PqRes { ok: 1, val: top };
+}
+
+fn test_priority_queue_basic() -> bool {
+    // min-heap
+    let mut mh = pq_new(0);
+    pq_push(&mut mh, 5);
+    pq_push(&mut mh, 1);
+    pq_push(&mut mh, 3);
+    pq_push(&mut mh, 0);
+    if (pq_len(&mh) != 4) {
+        return false;
+    }
+    let p1 = pq_pop(&mut mh);
+    if ((p1.ok != 1) || (p1.val != 0)) {
+        return false;
+    }
+    let p2 = pq_pop(&mut mh);
+    if (p2.val != 1) {
+        return false;
+    }
+    let p3 = pq_pop(&mut mh);
+    if (p3.val != 3) {
+        return false;
+    }
+    // max-heap
+    let mut xh = pq_new(1);
+    pq_push(&mut xh, 1);
+    pq_push(&mut xh, 9);
+    pq_push(&mut xh, 4);
+    let q1 = pq_pop(&mut xh);
+    if (q1.val != 9) {
+        return false;
+    }
+    let q2 = pq_pop(&mut xh);
+    if (q2.val != 4) {
+        return false;
+    }
+    // peek / empty
+    if (pq_is_empty(&mh)) {
+        return false;
+    }
+    let e = pq_pop(&mut mh);
+    if ((e.ok != 1) || (e.val != 5)) {
+        return false;
+    }
+    let e2 = pq_pop(&mut mh);
+    if (e2.ok != 0) {
+        return false;
+    }
+    if (pq_is_empty(&mh)) {
+    } else {
+        return false;
+    }
+    return true;
+}

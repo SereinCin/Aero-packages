@@ -20,31 +20,6 @@ REPO="SereinCin/Aero-packages"
 
 mkdir -p "$DIST"
 
-# ---- 硬编码 description 映射表（初期最快方案）----
-desc() {
-  case "$1" in
-    aero-base64)    echo "Base64 编解码" ;;
-    aero-hex)       echo "Hex 编解码" ;;
-    aero-url)       echo "URL 解析/构建" ;;
-    aero-unicode)   echo "Unicode 规范化/大小写" ;;
-    aero-log)       echo "结构化日志" ;;
-    aero-bench)     echo "微基准框架" ;;
-    aero-cli)       echo "命令行解析（clap 风格）" ;;
-    aero-config)    echo "多格式配置统一入口" ;;
-    aero-yaml)      echo "YAML 子集解析" ;;
-    aero-regex)     echo "正则表达式引擎" ;;
-    aero-http)      echo "HTTP 客户端和服务端" ;;
-    aero-toml)      echo "TOML 解析" ;;
-    aero-dns)       echo "DNS 查询（UDP）" ;;
-    aero-websocket) echo "WebSocket 协议" ;;
-    aero-compress)  echo "压缩（zlib FFI）" ;;
-    aero-zip)       echo "ZIP 归档" ;;
-    aero-tar)       echo "TAR 归档" ;;
-    aero-tls)       echo "TLS（OpenSSL FFI）" ;;
-    *)              echo "" ;;
-  esac
-}
-
 echo "==> 打包版本: $VERSION"
 
 # ---- 读取 Aero.toml 的 [link].libs（FFI 系统库声明；空 = 纯 Aero）----
@@ -85,6 +60,26 @@ desc() {
     aero-html)      echo "轻量 HTML 解析器" ;;
     aero-punycode)  echo "Punycode 编解码" ;;
     aero-mime)      echo "MIME 类型映射" ;;
+    aero-serde)     echo "通用序列化框架" ;;
+    aero-serde-derive) echo "序列化派生辅助" ;;
+    aero-serde-json) echo "serde + JSON 集成" ;;
+    aero-serde-yaml) echo "serde + YAML 集成" ;;
+    aero-serde-toml) echo "serde + TOML 集成" ;;
+    aero-prost)     echo "Protobuf 序列化" ;;
+    aero-flatbuffers) echo "FlatBuffers 序列化" ;;
+    aero-msgpack)   echo "MessagePack 序列化" ;;
+    aero-cbor)      echo "CBOR 序列化" ;;
+    aero-ron)       echo "RON 序列化" ;;
+    aero-bitvec)    echo "位向量" ;;
+    aero-bitset)    echo "位集" ;;
+    aero-lru)       echo "LRU 缓存" ;;
+    aero-ring-buffer) echo "环形缓冲" ;;
+    aero-priority-queue) echo "优先队列" ;;
+    aero-trie)      echo "前缀树" ;;
+    aero-rope)      echo "分段文本" ;;
+    aero-skiplist)  echo "跳表" ;;
+    aero-graph)     echo "图结构" ;;
+    aero-union-find) echo "并查集" ;;
     aero-dns)       echo "DNS 查询（UDP）" ;;
     aero-websocket) echo "WebSocket 协议" ;;
     aero-compress)  echo "压缩（zlib FFI）" ;;

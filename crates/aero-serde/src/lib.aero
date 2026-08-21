@@ -1,0 +1,227 @@
+// aero-serde
+// A minimal generic serialization framework for pure-Aero programs.
+//
+// A "tagged value" is a single string that carries a type tag in its first
+// byte and an encoded payload after it. Tags mirror the classic serde value
+// kinds: 0 = null, 1 = bool, 2 = int, 3 = string, 4 = array, 5 = object.
+//
+// Arrays store their (already tagged) items joined by 0x1F. Objects store
+// records of `tagged-key 0x1E tagged-value` joined by 0x1F.
+
+fn serde_kind_null() -> i64 { return 0; }
+fn serde_kind_bool() -> i64 { return 1; }
+fn serde_kind_int() -> i64 { return 2; }
+fn serde_kind_str() -> i64 { return 3; }
+fn serde_kind_array() -> i64 { return 4; }
+fn serde_kind_object() -> i64 { return 5; }
+
+// Build a tagged value from a kind and a raw payload.
+fn serde_tag(kind: i64, payload: str) -> str {
+    return format("%c", 64 + kind) + payload;
+}
+
+// Read the type tag of a tagged value.
+fn serde_untag(v: str) -> i64 {
+    return String::from(v).at(0) - 64;
+}
+
+// Read the raw payload of a tagged value.
+fn serde_payload(v: str) -> str {
+    return substr(v, 1, len(v));
+}
+
+// --- string helpers ----------------------------------------------------------
+
+// Copy a String into a fresh `str`.
+fn serde_string_to_str(s: String) -> str {
+    let n = s.len();
+    let mut out = "";
+    let mut i = 0;
+    while (i < n) {
+        out = out + format("%c", s.at(i));
+        i = i + 1;
+    }
+    return out;
+}
+
+// Wrap a `str` into a String (for building Vec<String> arguments).
+fn serde_string(s: str) -> String {
+    return String::from(s);
+}
+
+// --- constructors ------------------------------------------------------------
+
+fn serde_null() -> str {
+    return serde_tag(0, "");
+}
+
+fn serde_bool(b: bool) -> str {
+    if (b) {
+        return serde_tag(1, "1");
+    }
+    return serde_tag(1, "0");
+}
+
+fn serde_int(v: i64) -> str {
+    return serde_tag(2, format("%lld", v));
+}
+
+fn serde_str(s: str) -> str {
+    return serde_tag(3, s);
+}
+
+// Array from a list of tagged items.
+fn serde_array(items: Vec<String>) -> str {
+    let mut pl = "";
+    let mut i = 0;
+    while (i < items.len()) {
+        if (i > 0) {
+            pl = pl + format("%c", 31);
+        }
+        pl = pl + serde_string_to_str(items.get(i));
+        i = i + 1;
+    }
+    return serde_tag(4, pl);
+}
+
+// Object from parallel key/value lists (values must already be tagged).
+fn serde_object(keys: Vec<String>, vals: Vec<String>) -> str {
+    let mut pl = "";
+    let mut i = 0;
+    while (i < keys.len()) {
+        if (i > 0) {
+            pl = pl + format("%c", 31);
+        }
+        pl = pl + serde_str(serde_string_to_str(keys.get(i))) + format("%c", 30) + serde_string_to_str(vals.get(i));
+        i = i + 1;
+    }
+    return serde_tag(5, pl);
+}
+
+// --- decoders ----------------------------------------------------------------
+
+fn serde_int_value(v: str) -> i64 {
+    return str_to_int(serde_payload(v));
+}
+
+fn serde_bool_value(v: str) -> bool {
+    return str_cmp(serde_payload(v), "1") == 0;
+}
+
+fn serde_str_value(v: str) -> str {
+    return serde_payload(v);
+}
+
+// The n-th item of an array value ("" when out of range).
+fn serde_array_item(v: str, index: i64) -> str {
+    let pl = serde_payload(v);
+    let n = len(pl);
+    let mut count = 0;
+    let mut start = 0;
+    let mut i = 0;
+    while (i <= n) {
+        if ((i == n) || (String::from(pl).at(i) == 31)) {
+            if (count == index) {
+                return substr(pl, start, i);
+            }
+            count = count + 1;
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    return serde_null();
+}
+
+fn serde_array_len(v: str) -> i64 {
+    let pl = serde_payload(v);
+    let n = len(pl);
+    let mut count = 0;
+    let mut i = 0;
+    while (i <= n) {
+        if ((i == n) || (String::from(pl).at(i) == 31)) {
+            count = count + 1;
+        }
+        i = i + 1;
+    }
+    if (count == 0) {
+        return 0;
+    }
+    return count;
+}
+
+// Look up a key in an object value; returns a tagged value (null when absent).
+fn serde_object_get(obj: str, key: str) -> str {
+    let pl = serde_payload(obj);
+    let n = len(pl);
+    let mut start = 0;
+    let mut i = 0;
+    while (i <= n) {
+        if ((i == n) || (String::from(pl).at(i) == 31)) {
+            let rec = substr(pl, start, i);
+            let sep = str_find(rec, format("%c", 30));
+            if (sep >= 0) {
+                let k = serde_str_value(substr(rec, 0, sep));
+                let val = substr(rec, sep + 1, len(rec));
+                if (str_cmp(k, key) == 0) {
+                    return val;
+                }
+            }
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    return serde_null();
+}
+
+// Serialize any tagged value into a compact debug string (for logging).
+fn serde_to_debug(v: str) -> str {
+    let k = serde_untag(v);
+    if (k == 0) {
+        return "null";
+    }
+    if (k == 1) {
+        return serde_payload(v);
+    }
+    if (k == 2) {
+        return serde_payload(v);
+    }
+    if (k == 3) {
+        return "\"" + serde_payload(v) + "\"";
+    }
+    return "[" + serde_payload(v) + "]";
+}
+
+fn test_serde_basic() -> bool {
+    let s = serde_str("hello");
+    if (serde_untag(s) != 3) {
+        return false;
+    }
+    if (str_cmp(serde_str_value(s), "hello") != 0) {
+        return false;
+    }
+    if (serde_int_value(serde_int(42)) != 42) {
+        return false;
+    }
+    if (serde_bool_value(serde_bool(true))) {
+    } else {
+        return false;
+    }
+    // object round-trip
+    let mut keys: Vec<String> = Vec::new();
+    keys.push(String::from("name"));
+    keys.push(String::from("age"));
+    let mut vals: Vec<String> = Vec::new();
+    vals.push(serde_string(serde_str("aero")));
+    vals.push(serde_string(serde_int(30)));
+    let obj = serde_object(keys, vals);
+    if (str_cmp(serde_str_value(serde_object_get(obj, "name")), "aero") != 0) {
+        return false;
+    }
+    if (serde_int_value(serde_object_get(obj, "age")) != 30) {
+        return false;
+    }
+    if (serde_untag(serde_object_get(obj, "nope")) != 0) {
+        return false;
+    }
+    return true;
+}

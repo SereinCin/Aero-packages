@@ -1,0 +1,135 @@
+// aero-rope
+// A simple rope (segmented text) for pure-Aero programs (self-contained).
+// Text is kept as a list of pieces, so appending and concatenation avoid
+// copying the whole string; materialization is done on demand.
+
+struct Rope {
+    parts: Vec<String>,
+}
+
+fn rope_new() -> Rope {
+    return Rope { parts: Vec::new() };
+}
+
+fn rope_push_str(r: &mut Rope, s: str) {
+    r.parts.push(String::from(s));
+}
+
+fn rope_push_ch(r: &mut Rope, c: i64) {
+    r.parts.push(String::from(format("%c", c)));
+}
+
+fn rope_push_part(r: &mut Rope, s: String) {
+    r.parts.push(s);
+}
+
+fn rope_len(r: &Rope) -> i64 {
+    let mut total = 0;
+    let mut i = 0;
+    while (i < r.parts.len()) {
+        total = total + r.parts.get(i).len();
+        i = i + 1;
+    }
+    return total;
+}
+
+fn rope_is_empty(r: &Rope) -> bool {
+    return rope_len(r) == 0;
+}
+
+// Materialize the full text.
+fn rope_to_str(r: &Rope) -> str {
+    let mut out = "";
+    let mut i = 0;
+    while (i < r.parts.len()) {
+        let p = r.parts.get(i);
+        let mut j = 0;
+        while (j < p.len()) {
+            out = out + format("%c", p.at(j));
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// Concatenate two ropes.
+fn rope_concat(a: &Rope, b: &Rope) -> Rope {
+    let mut out = rope_new();
+    let mut i = 0;
+    while (i < a.parts.len()) {
+        out.parts.push(a.parts.get(i));
+        i = i + 1;
+    }
+    i = 0;
+    while (i < b.parts.len()) {
+        out.parts.push(b.parts.get(i));
+        i = i + 1;
+    }
+    return out;
+}
+
+// Slice [b, e) of the materialized text.
+fn rope_slice(r: &Rope, b: i64, e: i64) -> str {
+    return substr(rope_to_str(r), b, e);
+}
+
+// Number of pieces (segments).
+fn rope_piece_count(r: &Rope) -> i64 {
+    return r.parts.len();
+}
+
+// Rebalance: merge all pieces into a single piece (helps keep len() fast).
+fn rope_rebalance(r: &mut Rope) {
+    let mut out = "";
+    let mut i = 0;
+    while (i < r.parts.len()) {
+        let p = r.parts.get(i);
+        let mut j = 0;
+        while (j < p.len()) {
+            out = out + format("%c", p.at(j));
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    while (r.parts.len() > 0) {
+        r.parts.pop();
+    }
+    r.parts.push(String::from(out));
+}
+
+fn test_rope_basic() -> bool {
+    let mut r = rope_new();
+    rope_push_str(&mut r, "Hello ");
+    rope_push_str(&mut r, "Aero");
+    rope_push_ch(&mut r, 33);
+    if (rope_len(&r) != 11) {
+        return false;
+    }
+    if (str_cmp(rope_to_str(&r), "Hello Aero!") != 0) {
+        return false;
+    }
+    if (rope_piece_count(&r) != 3) {
+        return false;
+    }
+    // concat
+    let mut r2 = rope_new();
+    rope_push_str(&mut r2, "!!");
+    let c = rope_concat(&r, &r2);
+    if (str_cmp(rope_to_str(&c), "Hello Aero!!!") != 0) {
+        return false;
+    }
+    // slice
+    if (str_cmp(rope_slice(&r, 0, 5), "Hello") != 0) {
+        return false;
+    }
+    // rebalance collapses pieces
+    rope_rebalance(&mut r);
+    if (rope_piece_count(&r) != 1) {
+        return false;
+    }
+    if (str_cmp(rope_to_str(&r), "Hello Aero!") != 0) {
+        return false;
+    }
+    return true;
+}

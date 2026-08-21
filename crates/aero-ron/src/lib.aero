@@ -1,0 +1,198 @@
+// aero-ron
+// RON (Rusty Object Notation) serialization subset for pure-Aero programs
+// (self-contained). Generates `Name( field: value, ... )` struct literals and
+// `[ a, b ]` lists, and can extract a single field value from a struct text.
+
+// Encode a string as a RON string literal.
+fn ron_quote(s: str) -> str {
+    let src = String::from(s);
+    let n = src.len();
+    let mut out = "\"";
+    let mut i = 0;
+    while (i < n) {
+        let c = src.at(i);
+        if (c == 34) {
+            out = out + "\\\"";
+        } else if (c == 92) {
+            out = out + "\\\\";
+        } else if (c == 10) {
+            out = out + "\\n";
+        } else if (c == 9) {
+            out = out + "\\t";
+        } else {
+            out = out + format("%c", c);
+        }
+        i = i + 1;
+    }
+    out = out + "\"";
+    return out;
+}
+
+// Decode a RON string literal (starting at an opening quote).
+fn ron_unquote(s: str) -> str {
+    let src = String::from(s);
+    let n = src.len();
+    let mut i = 0;
+    while ((i < n) && (src.at(i) <= 32)) {
+        i = i + 1;
+    }
+    if ((i >= n) || (src.at(i) != 34)) {
+        return s;
+    }
+    let mut pos = i + 1;
+    let mut out = "";
+    while (pos < n) {
+        let c = src.at(pos);
+        if (c == 34) {
+            return out;
+        }
+        if (c == 92) {
+            let e = src.at(pos + 1);
+            if (e == 110) {
+                out = out + format("%c", 10);
+            } else if (e == 116) {
+                out = out + format("%c", 9);
+            } else {
+                out = out + format("%c", e);
+            }
+            pos = pos + 2;
+        } else {
+            out = out + format("%c", c);
+            pos = pos + 1;
+        }
+    }
+    return out;
+}
+
+fn ron_to_str(s: String) -> str {
+    let n = s.len();
+    let mut out = "";
+    let mut i = 0;
+    while (i < n) {
+        out = out + format("%c", s.at(i));
+        i = i + 1;
+    }
+    return out;
+}
+
+// Encode a struct literal: `Name( field: value, ... )`.
+fn ron_encode_struct(name: str, keys: Vec<String>, vals: Vec<String>) -> str {
+    let mut out = name + "( ";
+    let mut i = 0;
+    while (i < keys.len()) {
+        if (i > 0) {
+            out = out + ", ";
+        }
+        out = out + ron_to_str(keys.get(i)) + ": " + ron_to_str(vals.get(i));
+        i = i + 1;
+    }
+    out = out + " )";
+    return out;
+}
+
+// Encode a list literal: `[ a, b ]`.
+fn ron_encode_list(items: Vec<String>) -> str {
+    let mut out = "[ ";
+    let mut i = 0;
+    while (i < items.len()) {
+        if (i > 0) {
+            out = out + ", ";
+        }
+        out = out + ron_to_str(items.get(i));
+        i = i + 1;
+    }
+    out = out + " ]";
+    return out;
+}
+
+fn ron_encode_int(v: i64) -> str {
+    return format("%lld", v);
+}
+
+fn ron_encode_bool(b: bool) -> str {
+    if (b) {
+        return "true";
+    }
+    return "false";
+}
+
+fn ron_encode_nil() -> str {
+    return "()";
+}
+
+// Extract a single field value from a struct literal: ron_field_value(
+// `Point( x: 1, y: 2 )`, "y" ) -> "2".
+fn ron_field_value(ron: str, field: str) -> str {
+    let src = String::from(ron);
+    let n = src.len();
+    let key = field + ":";
+    let mut pos = 0;
+    while (pos < n) {
+        let at = str_find(substr(ron, pos, n), key);
+        if (at < 0) {
+            return "";
+        }
+        let kpos = pos + at;
+        // ensure the char before the field is a space or '(' (top-level match)
+        let vstart = kpos + len(key);
+        let mut p = vstart;
+        while ((p < n) && (src.at(p) <= 32)) {
+            p = p + 1;
+        }
+        // read the value until ',' or ')' at depth 0
+        let mut vout = "";
+        let mut depth = 0;
+        let mut done = 0;
+        while ((p < n) && (done == 0)) {
+            let c = src.at(p);
+            if (c == 40) {
+                depth = depth + 1;
+            } else if (c == 41) {
+                if (depth == 0) {
+                    done = 1;
+                } else {
+                    depth = depth - 1;
+                }
+            } else if ((c == 44) && (depth == 0)) {
+                done = 1;
+            }
+            if (done == 0) {
+                vout = vout + format("%c", c);
+            }
+            p = p + 1;
+        }
+        return vout;
+    }
+    return "";
+}
+
+fn test_ron_basic() -> bool {
+    if (str_cmp(ron_quote("a\"b"), "\"a\\\"b\"") != 0) {
+        return false;
+    }
+    if (str_cmp(ron_unquote("\"hi\""), "hi") != 0) {
+        return false;
+    }
+    // struct encode + field extraction
+    let mut keys: Vec<String> = Vec::new();
+    keys.push(String::from("x"));
+    keys.push(String::from("y"));
+    let mut vals: Vec<String> = Vec::new();
+    vals.push(String::from("1"));
+    vals.push(String::from("2"));
+    let st = ron_encode_struct("Point", keys, vals);
+    if (str_cmp(st, "Point( x: 1, y: 2 )") != 0) {
+        return false;
+    }
+    if (str_cmp(ron_field_value(st, "y"), "2") != 0) {
+        return false;
+    }
+    // list
+    let mut items: Vec<String> = Vec::new();
+    items.push(String::from("1"));
+    items.push(String::from("2"));
+    if (str_cmp(ron_encode_list(items), "[ 1, 2 ]") != 0) {
+        return false;
+    }
+    return true;
+}

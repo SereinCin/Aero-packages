@@ -1,0 +1,169 @@
+// aero-trie
+// A prefix tree (trie) for pure-Aero programs (self-contained). Nodes are
+// stored in parallel arrays using a first-child / next-sibling layout, which
+// avoids nested vectors. Provides insert, contains, prefix counts and a word
+// count.
+
+struct Trie {
+    ch: Vec<i64>,      // byte stored at the node (root = -1)
+    first: Vec<i64>,   // index of the first child, or -1
+    next: Vec<i64>,    // index of the next sibling, or -1
+    is_word: Vec<i64>, // 1 when the node ends a word
+}
+
+fn trie_new() -> Trie {
+    let mut t = Trie { ch: Vec::new(), first: Vec::new(), next: Vec::new(), is_word: Vec::new() };
+    t.ch.push(-1);
+    t.first.push(-1);
+    t.next.push(-1);
+    t.is_word.push(0);
+    return t;
+}
+
+// Find the child of `parent` storing byte `c`; -1 when absent.
+fn trie_find_child(t: &mut Trie, parent: i64, c: i64) -> i64 {
+    let mut child = t.first.get(parent);
+    while (child >= 0) {
+        if (t.ch.get(child) == c) {
+            return child;
+        }
+        child = t.next.get(child);
+    }
+    return -1;
+}
+
+// Insert a word.
+fn trie_insert(t: &mut Trie, word: str) {
+    let src = String::from(word);
+    let n = len(word);
+    let mut node = 0;
+    let mut i = 0;
+    while (i < n) {
+        let c = src.at(i);
+        let mut child = trie_find_child(t, node, c);
+        if (child < 0) {
+            t.ch.push(c);
+            t.first.push(-1);
+            t.next.push(-1);
+            t.is_word.push(0);
+            let new = t.ch.len() - 1;
+            // link as the new first child of `node`
+            t.next.set(new, t.first.get(node));
+            t.first.set(node, new);
+            child = new;
+        }
+        node = child;
+        i = i + 1;
+    }
+    t.is_word.set(node, 1);
+}
+
+fn trie_contains(t: &mut Trie, word: str) -> bool {
+    let src = String::from(word);
+    let n = len(word);
+    let mut node = 0;
+    let mut i = 0;
+    while (i < n) {
+        let c = src.at(i);
+        let child = trie_find_child(t, node, c);
+        if (child < 0) {
+            return false;
+        }
+        node = child;
+        i = i + 1;
+    }
+    return t.is_word.get(node) == 1;
+}
+
+// Number of complete words stored under `node` (recursive subtree count).
+fn trie_count_node(t: &mut Trie, node: i64) -> i64 {
+    let mut count = t.is_word.get(node);
+    let mut child = t.first.get(node);
+    while (child >= 0) {
+        count = count + trie_count_node(t, child);
+        child = t.next.get(child);
+    }
+    return count;
+}
+
+fn trie_word_count(t: &mut Trie) -> i64 {
+    return trie_count_node(t, 0);
+}
+
+// Number of stored words that start with `prefix`.
+fn trie_prefix_count(t: &mut Trie, prefix: str) -> i64 {
+    let src = String::from(prefix);
+    let n = len(prefix);
+    let mut node = 0;
+    let mut i = 0;
+    while (i < n) {
+        let c = src.at(i);
+        let child = trie_find_child(t, node, c);
+        if (child < 0) {
+            return 0;
+        }
+        node = child;
+        i = i + 1;
+    }
+    return trie_count_node(t, node);
+}
+
+// Longest prefix of `s` that is itself a stored word ("" when none).
+fn trie_longest_prefix(t: &mut Trie, s: str) -> str {
+    let src = String::from(s);
+    let n = len(s);
+    let mut node = 0;
+    let mut last = -1;
+    let mut i = 0;
+    while (i < n) {
+        let c = src.at(i);
+        let child = trie_find_child(t, node, c);
+        if (child < 0) {
+            break;
+        }
+        node = child;
+        if (t.is_word.get(node) == 1) {
+            last = i + 1;
+        }
+        i = i + 1;
+    }
+    if (last < 0) {
+        return "";
+    }
+    return substr(s, 0, last);
+}
+
+fn test_trie_basic() -> bool {
+    let mut t = trie_new();
+    trie_insert(&mut t, "cat");
+    trie_insert(&mut t, "car");
+    trie_insert(&mut t, "dog");
+    trie_insert(&mut t, "catnip");
+    if (trie_contains(&mut t, "cat")) {
+    } else {
+        return false;
+    }
+    if (trie_contains(&mut t, "c")) {
+        return false;
+    }
+    if (trie_contains(&mut t, "dog")) {
+    } else {
+        return false;
+    }
+    if (trie_contains(&mut t, "cow")) {
+        return false;
+    }
+    if (trie_word_count(&mut t) != 4) {
+        return false;
+    }
+    if (trie_prefix_count(&mut t, "ca") != 3) {
+        return false;
+    }
+    if (trie_prefix_count(&mut t, "do") != 1) {
+        return false;
+    }
+    if (str_cmp(trie_longest_prefix(&mut t, "carpet"), "car") != 0) {
+        return false;
+    }
+    return true;
+}

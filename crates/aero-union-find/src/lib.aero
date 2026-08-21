@@ -1,0 +1,121 @@
+// aero-union-find
+// A union-find (disjoint set) for pure-Aero programs (self-contained) with
+// path compression and union by size.
+
+struct UnionFind {
+    parent: Vec<i64>,
+    size: Vec<i64>,
+    n: i64,
+}
+
+fn uf_new(n: i64) -> UnionFind {
+    let mut uf = UnionFind { parent: Vec::new(), size: Vec::new(), n: n };
+    let mut i = 0;
+    while (i < n) {
+        uf.parent.push(i);
+        uf.size.push(1);
+        i = i + 1;
+    }
+    return uf;
+}
+
+// Find the root of `x` with path compression.
+fn uf_find(uf: &mut UnionFind, x: i64) -> i64 {
+    // locate the root
+    let mut r = x;
+    let mut done = 0;
+    while (done == 0) {
+        let p = uf.parent.get(r);
+        if (p == r) {
+            done = 1;
+        } else {
+            r = p;
+        }
+    }
+    // compress the path
+    let mut c = x;
+    let mut done2 = 0;
+    while (done2 == 0) {
+        let p = uf.parent.get(c);
+        if (p == r) {
+            done2 = 1;
+        } else {
+            uf.parent.set(c, r);
+            c = p;
+        }
+    }
+    return r;
+}
+
+// Union the sets of a and b (union by size).
+fn uf_union(uf: &mut UnionFind, a: i64, b: i64) {
+    let ra = uf_find(uf, a);
+    let rb = uf_find(uf, b);
+    if (ra == rb) {
+        return;
+    }
+    if (uf.size.get(ra) < uf.size.get(rb)) {
+        uf.parent.set(ra, rb);
+        uf.size.set(rb, uf.size.get(rb) + uf.size.get(ra));
+    } else {
+        uf.parent.set(rb, ra);
+        uf.size.set(ra, uf.size.get(ra) + uf.size.get(rb));
+    }
+}
+
+fn uf_connected(uf: &mut UnionFind, a: i64, b: i64) -> bool {
+    return uf_find(uf, a) == uf_find(uf, b);
+}
+
+// Number of disjoint components.
+fn uf_count(uf: &UnionFind) -> i64 {
+    let mut c = 0;
+    let mut i = 0;
+    while (i < uf.n) {
+        if (uf.parent.get(i) == i) {
+            c = c + 1;
+        }
+        i = i + 1;
+    }
+    return c;
+}
+
+// Size of the component containing x.
+fn uf_size_of(uf: &mut UnionFind, x: i64) -> i64 {
+    let r = uf_find(uf, x);
+    return uf.size.get(r);
+}
+
+fn test_union_find_basic() -> bool {
+    let mut uf = uf_new(8);
+    if (uf_count(&uf) != 8) {
+        return false;
+    }
+    uf_union(&mut uf, 0, 1);
+    uf_union(&mut uf, 1, 2);
+    uf_union(&mut uf, 3, 4);
+    if (uf_connected(&mut uf, 0, 2)) {
+    } else {
+        return false;
+    }
+    if (uf_connected(&mut uf, 0, 3)) {
+        return false;
+    }
+    if (uf_size_of(&mut uf, 0) != 3) {
+        return false;
+    }
+    // union merges components
+    uf_union(&mut uf, 2, 3);
+    if (uf_connected(&mut uf, 4, 0)) {
+    } else {
+        return false;
+    }
+    if (uf_size_of(&mut uf, 4) != 5) {
+        return false;
+    }
+    // 8 nodes, 2 components formed: {0..4} and {5},{6},{7}
+    if (uf_count(&uf) != 4) {
+        return false;
+    }
+    return true;
+}

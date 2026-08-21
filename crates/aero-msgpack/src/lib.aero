@@ -1,0 +1,197 @@
+// aero-msgpack
+// MessagePack binary serialization subset for pure-Aero programs
+// (self-contained). Covers nil / bool / signed+unsigned integers / strings /
+// array headers with the compact marker formats.
+
+// Marker constants (decimal).
+fn mp_marker_nil() -> i64 { return 192; }
+fn mp_marker_false() -> i64 { return 194; }
+fn mp_marker_true() -> i64 { return 195; }
+fn mp_marker_int8() -> i64 { return 208; }
+fn mp_marker_int16() -> i64 { return 209; }
+fn mp_marker_int32() -> i64 { return 210; }
+fn mp_marker_int64() -> i64 { return 211; }
+fn mp_marker_uint8() -> i64 { return 204; }
+fn mp_marker_uint16() -> i64 { return 205; }
+fn mp_marker_uint32() -> i64 { return 206; }
+fn mp_marker_uint64() -> i64 { return 207; }
+fn mp_marker_str8() -> i64 { return 217; }
+fn mp_marker_str16() -> i64 { return 218; }
+
+fn mp_byte(v: i64, off: i64) -> i64 {
+    return (v >> (off * 8)) % 256;
+}
+
+// Encode an integer using the smallest fitting marker.
+fn msgpack_encode_int(v: i64) -> str {
+    if ((v >= 0) && (v < 128)) {
+        return format("%c", v);                       // positive fixint
+    }
+    if ((v >= -32) && (v < 0)) {
+        return format("%c", v % 256);                 // negative fixint (two's complement byte)
+    }
+    if ((v >= -128) && (v < 128)) {
+        return format("%c", 208) + format("%c", mp_byte(v, 0));
+    }
+    if ((v >= -32768) && (v < 32768)) {
+        return format("%c", 209) + format("%c", mp_byte(v, 1)) + format("%c", mp_byte(v, 0));
+    }
+    if ((v >= -2147483648) && (v < 2147483648)) {
+        let mut out = format("%c", 210);
+        let mut i = 3;
+        while (i >= 0) {
+            out = out + format("%c", mp_byte(v, i));
+            i = i - 1;
+        }
+        return out;
+    }
+    let mut out = format("%c", 211);
+    let mut i = 7;
+    while (i >= 0) {
+        out = out + format("%c", mp_byte(v, i));
+        i = i - 1;
+    }
+    return out;
+}
+
+fn msgpack_encode_nil() -> str {
+    return format("%c", 192);
+}
+
+fn msgpack_encode_bool(b: bool) -> str {
+    if (b) {
+        return format("%c", 195);
+    }
+    return format("%c", 194);
+}
+
+// Encode a string: fixstr (<32) or str8.
+fn msgpack_encode_str(s: str) -> str {
+    let n = len(s);
+    if (n < 32) {
+        return format("%c", 160 + n) + s;
+    }
+    return format("%c", 217) + format("%c", n % 256) + s;
+}
+
+// Encode an array header: fixarray (<16) or array16.
+fn msgpack_encode_array_header(n: i64) -> str {
+    if (n < 16) {
+        return format("%c", 144 + n);
+    }
+    return format("%c", 220) + format("%c", mp_byte(n, 1)) + format("%c", mp_byte(n, 0));
+}
+
+// Decoded value kinds.
+fn mp_kind_nil() -> i64 { return 0; }
+fn mp_kind_bool() -> i64 { return 1; }
+fn mp_kind_int() -> i64 { return 2; }
+fn mp_kind_str() -> i64 { return 3; }
+fn mp_kind_array() -> i64 { return 4; }
+
+struct MpVal {
+    kind: i64,
+    value: i64,
+    pos: i64,
+}
+
+// Decode one value at `pos`. For strings/arrays, `value` is the element/byte
+// length (the payload itself is skipped).
+fn msgpack_decode(s: str, pos: i64) -> MpVal {
+    let src = String::from(s);
+    let n = len(s);
+    let m = src.at(pos);
+    if ((m >= 0) && (m < 128)) {
+        return MpVal { kind: 2, value: m, pos: pos + 1 };
+    }
+    if ((m >= 224) && (m < 256)) {
+        return MpVal { kind: 2, value: m - 256, pos: pos + 1 };
+    }
+    if ((m >= 160) && (m < 192)) {
+        return MpVal { kind: 3, value: m - 160, pos: pos + 1 };
+    }
+    if ((m >= 144) && (m < 160)) {
+        return MpVal { kind: 4, value: m - 144, pos: pos + 1 };
+    }
+    if (m == 192) {
+        return MpVal { kind: 0, value: 0, pos: pos + 1 };
+    }
+    if (m == 194) {
+        return MpVal { kind: 1, value: 0, pos: pos + 1 };
+    }
+    if (m == 195) {
+        return MpVal { kind: 1, value: 1, pos: pos + 1 };
+    }
+    if (m == 208) {
+        let b = src.at(pos + 1);
+        if (b >= 128) {
+            return MpVal { kind: 2, value: b - 256, pos: pos + 2 };
+        }
+        return MpVal { kind: 2, value: b, pos: pos + 2 };
+    }
+    if (m == 209) {
+        let b1 = src.at(pos + 1) % 256;
+        let b0 = src.at(pos + 2) % 256;
+        let v = b1 * 256 + b0;
+        if (v >= 32768) {
+            return MpVal { kind: 2, value: v - 65536, pos: pos + 3 };
+        }
+        return MpVal { kind: 2, value: v, pos: pos + 3 };
+    }
+    if (m == 217) {
+        return MpVal { kind: 3, value: src.at(pos + 1) % 256, pos: pos + 2 };
+    }
+    if (m == 218) {
+        let b1 = src.at(pos + 1) % 256;
+        let b0 = src.at(pos + 2) % 256;
+        return MpVal { kind: 3, value: b1 * 256 + b0, pos: pos + 3 };
+    }
+    return MpVal { kind: 0, value: 0, pos: pos + 1 };
+}
+
+// Extract the raw string payload of a fixstr/str8/str16 value.
+fn msgpack_str_payload(s: str, pos: i64, lenv: i64) -> str {
+    let v = msgpack_decode(s, pos);
+    return substr(s, v.pos, v.pos + lenv);
+}
+
+fn test_msgpack_basic() -> bool {
+    // int round-trips
+    let e = msgpack_encode_int(42);
+    if (msgpack_decode(e, 0).value != 42) {
+        return false;
+    }
+    let e2 = msgpack_encode_int(300);
+    let d2 = msgpack_decode(e2, 0);
+    if (d2.value != 300) {
+        return false;
+    }
+    let e3 = msgpack_encode_int(-5);
+    if (msgpack_decode(e3, 0).value != -5) {
+        return false;
+    }
+    // nil / bool
+    if (msgpack_decode(msgpack_encode_nil(), 0).kind != 0) {
+        return false;
+    }
+    if (msgpack_decode(msgpack_encode_bool(true), 0).value != 1) {
+        return false;
+    }
+    // string round-trip
+    let es = msgpack_encode_str("hi");
+    let ds = msgpack_decode(es, 0);
+    if (ds.kind != 3) {
+        return false;
+    }
+    if (ds.value != 2) {
+        return false;
+    }
+    if (str_cmp(msgpack_str_payload(es, 0, ds.value), "hi") != 0) {
+        return false;
+    }
+    // array header
+    if (msgpack_decode(msgpack_encode_array_header(3), 0).value != 3) {
+        return false;
+    }
+    return true;
+}
