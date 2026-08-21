@@ -1,0 +1,181 @@
+// aero-xml
+// Pure-Aero XML subset utilities. Covers:
+//   - find the first occurrence of an element `<tag ...>...</tag>`
+//   - extract the text content of an element
+//   - escape / unescape the five predefined XML entities
+//   - read an attribute value from an opening tag
+// Nested parsing / namespaces / CDATA are out of scope for now.
+
+// XML entity escapes.
+fn xml_escape(s: str) -> str {
+    let src = String::from(s);
+    let n = src.len();
+    let out = "";
+    let i = 0;
+    while (i < n) {
+        let c = src.at(i);
+        if (c == 60) {
+            out = out + "&lt;";
+        } else if (c == 62) {
+            out = out + "&gt;";
+        } else if (c == 38) {
+            out = out + "&amp;";
+        } else if (c == 34) {
+            out = out + "&quot;";
+        } else if (c == 39) {
+            out = out + "&apos;";
+        } else {
+            out = out + format("%c", c);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// Replace the five predefined entities back to characters.
+fn xml_unescape(s: str) -> str {
+    let src = String::from(s);
+    let n = src.len();
+    let out = "";
+    let i = 0;
+    while (i < n) {
+        let c = src.at(i);
+        if (c == 38) {
+            // '&' + up to 6 chars: try to match an entity
+            let tail = substr(s, i, n);
+            if (str_find(tail, "&lt;") == 0) {
+                out = out + "<";
+                i = i + 4;
+            } else if (str_find(tail, "&gt;") == 0) {
+                out = out + ">";
+                i = i + 4;
+            } else if (str_find(tail, "&amp;") == 0) {
+                out = out + "&";
+                i = i + 5;
+            } else if (str_find(tail, "&quot;") == 0) {
+                out = out + "\"";
+                i = i + 6;
+            } else if (str_find(tail, "&apos;") == 0) {
+                out = out + "'";
+                i = i + 6;
+            } else {
+                out = out + "&";
+                i = i + 1;
+            }
+        } else {
+            out = out + format("%c", c);
+            i = i + 1;
+        }
+    }
+    return out;
+}
+
+// Find the start of the first `<tag` opening (returns index, or -1).
+fn xml_find_tag_start(doc: str, tag: str) -> i64 {
+    let open = str_find(doc, "<" + tag);
+    return open;
+}
+
+// Find the end index of the matching `</tag>` (or -1 if absent).
+fn xml_find_tag_end(doc: str, tag: str) -> i64 {
+    let close = str_find(doc, "</" + tag + ">");
+    if (close < 0) {
+        return -1;
+    }
+    return close + len(tag) + 3;   // index just past '</tag>'
+}
+
+// Extract the full `<tag>...</tag>` element (including tags), or "".
+fn xml_element(doc: str, tag: str) -> str {
+    let start = xml_find_tag_start(doc, tag);
+    if (start < 0) {
+        return "";
+    }
+    let end = xml_find_tag_end(doc, tag);
+    if (end < 0) {
+        return "";
+    }
+    return substr(doc, start, end);
+}
+
+// Extract just the text content between `<tag>` and `</tag>`.
+fn xml_text(doc: str, tag: str) -> str {
+    let elem = xml_element(doc, tag);
+    if (len(elem) == 0) {
+        return "";
+    }
+    let s = String::from(elem);
+    let n = s.len();
+    // find '>' after '<tag'
+    let gt = -1;
+    let i = 0;
+    while (i < n) {
+        if (s.at(i) == 62) {
+            gt = i;
+            break;
+        }
+        i = i + 1;
+    }
+    if (gt < 0) {
+        return "";
+    }
+    // find '</' after that
+    let close = str_find(substr(elem, gt + 1, n), "</");
+    if (close < 0) {
+        return substr(elem, gt + 1, n);
+    }
+    return substr(elem, gt + 1, gt + 1 + close);
+}
+
+// Read an attribute value from an opening tag: xml_attr("<a href=\"x\">", "href") -> "x".
+fn xml_attr(tag: str, name: str) -> str {
+    let s = String::from(tag);
+    let n = s.len();
+    let key = name + "=";
+    let pos = str_find(tag, key);
+    if (pos < 0) {
+        return "";
+    }
+    let vstart = pos + len(key);
+    if (vstart >= n) {
+        return "";
+    }
+    // value is quoted with ' or "
+    let q = s.at(vstart);
+    if ((q != 34) && (q != 39)) {
+        return "";
+    }
+    let out = "";
+    let i = vstart + 1;
+    while (i < n) {
+        let c = s.at(i);
+        if (c == q) {
+            break;
+        }
+        out = out + format("%c", c);
+        i = i + 1;
+    }
+    return out;
+}
+
+// Convenience smoke: escaping round-trips a '<' correctly.
+fn xml_test_escape(s: str) -> bool {
+    let enc = xml_escape(s);
+    let dec = xml_unescape(enc);
+    return str_cmp(dec, s) == 0;
+}
+
+// Smoke test entry point (used by `aero test`).
+fn test_xml_basic() -> bool {
+    if (xml_test_escape("<x>")) {
+    } else {
+        return false;
+    }
+    if (str_cmp(xml_text("<a>hello</a>", "a"), "hello") != 0) {
+        return false;
+    }
+    if (str_cmp(xml_unescape("a &amp; b"), "a & b") != 0) {
+        return false;
+    }
+    return true;
+}

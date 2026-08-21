@@ -1,0 +1,116 @@
+// aero-levenshtein
+// Edit-distance (Levenshtein) for pure-Aero programs, computed with a two-row
+// DP table backed by Vec<i64>. Insertion / deletion / substitution each cost 1.
+
+// Levenshtein distance between two strings.
+fn levenshtein(a: str, b: str) -> i64 {
+    let la = len(a);
+    let lb = len(b);
+    if (la == 0) {
+        return lb;
+    }
+    if (lb == 0) {
+        return la;
+    }
+    let asrc = String::from(a);
+    let bsrc = String::from(b);
+    let mut prev = Vec::new();
+    let mut j = 0;
+    while (j <= lb) {
+        prev.push(j);
+        j = j + 1;
+    }
+    let mut i = 1;
+    while (i <= la) {
+        let mut cur = Vec::new();
+        cur.push(i);
+        j = 1;
+        while (j <= lb) {
+            let ca = asrc.at(i - 1);
+            let cb = bsrc.at(j - 1);
+            let mut cost = 0;
+            if (ca != cb) {
+                cost = 1;
+            }
+            let del = prev.get(j) + 1;
+            let ins = cur.get(j - 1) + 1;
+            let sub = prev.get(j - 1) + cost;
+            let mut m = del;
+            if (ins < m) {
+                m = ins;
+            }
+            if (sub < m) {
+                m = sub;
+            }
+            cur.push(m);
+            j = j + 1;
+        }
+        prev = cur;
+        i = i + 1;
+    }
+    return prev.get(lb);
+}
+
+// Normalized similarity as a percentage in [0, 100]; 100 = identical.
+fn levenshtein_similarity(a: str, b: str) -> i64 {
+    let la = len(a);
+    let lb = len(b);
+    let mut mlen = la;
+    if (lb > mlen) {
+        mlen = lb;
+    }
+    if (mlen == 0) {
+        return 100;
+    }
+    let d = levenshtein(a, b);
+    return (100 * (mlen - d)) / mlen;
+}
+
+// Closest word from a `|`-joined dictionary (smallest distance, first wins).
+fn closest_word(query: str, dict: str) -> str {
+    let best = "";
+    let mut best_d = -1;
+    let n = len(dict);
+    let mut start = 0;
+    let mut i = 0;
+    while (i <= n) {
+        if ((i == n) || (String::from(dict).at(i) == 124)) {
+            let word = substr(dict, start, i);
+            if (len(word) > 0) {
+                let d = levenshtein(query, word);
+                if ((best_d < 0) || (d < best_d)) {
+                    best_d = d;
+                    best = word;
+                }
+            }
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    return best;
+}
+
+fn test_levenshtein_basic() -> bool {
+    if (levenshtein("kitten", "sitting") != 3) {
+        return false;
+    }
+    if (levenshtein("", "abc") != 3) {
+        return false;
+    }
+    if (levenshtein("abc", "") != 3) {
+        return false;
+    }
+    if (levenshtein("abc", "abc") != 0) {
+        return false;
+    }
+    if (levenshtein("flaw", "lawn") != 2) {
+        return false;
+    }
+    if (levenshtein_similarity("test", "test") != 100) {
+        return false;
+    }
+    if (str_cmp(closest_word("kat", "cat|dog|bird"), "cat") != 0) {
+        return false;
+    }
+    return true;
+}

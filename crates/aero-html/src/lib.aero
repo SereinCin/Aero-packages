@@ -1,0 +1,177 @@
+// aero-html
+// Minimal HTML utilities for pure-Aero programs (self-contained, no deps):
+//   - html_strip_tags: remove all tags, keep text with entities unescaped
+//   - html_text_of:    text inside the first `<tag>...</tag>`
+//   - html_attr:       attribute value from the first opening tag
+//   - html_escape / html_unescape: entity helpers (local copies)
+// Comments, scripts and full tree parsing are out of scope.
+
+// Escape the five HTML-special characters.
+fn html_escape(s: str) -> str {
+    let src = String::from(s);
+    let n = src.len();
+    let mut out = "";
+    let mut i = 0;
+    while (i < n) {
+        let c = src.at(i);
+        if (c == 38) {
+            out = out + "&amp;";
+        } else if (c == 60) {
+            out = out + "&lt;";
+        } else if (c == 62) {
+            out = out + "&gt;";
+        } else if (c == 34) {
+            out = out + "&quot;";
+        } else if (c == 39) {
+            out = out + "&#39;";
+        } else {
+            out = out + format("%c", c);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// Unescape the predefined entities.
+fn html_unescape(s: str) -> str {
+    let src = String::from(s);
+    let n = src.len();
+    let mut out = "";
+    let mut i = 0;
+    while (i < n) {
+        let c = src.at(i);
+        if (c == 38) {
+            let tail = substr(s, i, n);
+            if (str_find(tail, "&amp;") == 0) {
+                out = out + "&";
+                i = i + 5;
+            } else if (str_find(tail, "&lt;") == 0) {
+                out = out + "<";
+                i = i + 4;
+            } else if (str_find(tail, "&gt;") == 0) {
+                out = out + ">";
+                i = i + 4;
+            } else if (str_find(tail, "&quot;") == 0) {
+                out = out + "\"";
+                i = i + 6;
+            } else if (str_find(tail, "&#39;") == 0) {
+                out = out + "'";
+                i = i + 6;
+            } else {
+                out = out + "&";
+                i = i + 1;
+            }
+        } else {
+            out = out + format("%c", c);
+            i = i + 1;
+        }
+    }
+    return out;
+}
+
+// Remove every `<...>` tag and return the remaining text (entities unescaped).
+fn html_strip_tags(html: str) -> str {
+    let src = String::from(html);
+    let n = src.len();
+    let mut out = "";
+    let mut i = 0;
+    while (i < n) {
+        let c = src.at(i);
+        if (c == 60) {
+            let mut j = i + 1;
+            while ((j < n) && (src.at(j) != 62)) {
+                j = j + 1;
+            }
+            i = j + 1;
+        } else {
+            out = out + format("%c", c);
+            i = i + 1;
+        }
+    }
+    return html_unescape(out);
+}
+
+// Text content of the first `<tag ...>...</tag>` element.
+fn html_text_of(html: str, tag: str) -> str {
+    let open = str_find(html, "<" + tag);
+    if (open < 0) {
+        return "";
+    }
+    let src = String::from(html);
+    let n = src.len();
+    let mut gt = open + 1;
+    while ((gt < n) && (src.at(gt) != 62)) {
+        gt = gt + 1;
+    }
+    if (gt >= n) {
+        return "";
+    }
+    let close = str_find(substr(html, gt + 1, n), "</" + tag);
+    if (close < 0) {
+        return "";
+    }
+    return html_unescape(substr(html, gt + 1, gt + 1 + close));
+}
+
+// Attribute value from the first opening tag in the document.
+fn html_attr(html: str, name: str) -> str {
+    let lt = str_find(html, "<");
+    if (lt < 0) {
+        return "";
+    }
+    let src = String::from(html);
+    let n = src.len();
+    let mut gt = lt + 1;
+    while ((gt < n) && (src.at(gt) != 62)) {
+        gt = gt + 1;
+    }
+    if (gt >= n) {
+        return "";
+    }
+    return _attr_in_tag(substr(html, lt, gt + 1), name);
+}
+
+fn _attr_in_tag(tag: str, name: str) -> str {
+    let src = String::from(tag);
+    let n = src.len();
+    let key = name + "=";
+    let pos = str_find(tag, key);
+    if (pos < 0) {
+        return "";
+    }
+    let vstart = pos + len(key);
+    if (vstart >= n) {
+        return "";
+    }
+    let q = src.at(vstart);
+    if ((q != 34) && (q != 39)) {
+        return "";
+    }
+    let mut out = "";
+    let mut i = vstart + 1;
+    while (i < n) {
+        let c = src.at(i);
+        if (c == q) {
+            break;
+        }
+        out = out + format("%c", c);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn test_html_basic() -> bool {
+    if (str_cmp(html_strip_tags("<p>Hello <b>world</b>!</p>"), "Hello world!") != 0) {
+        return false;
+    }
+    if (str_cmp(html_text_of("<title>Aero</title><h1>Hi</h1>", "title"), "Aero") != 0) {
+        return false;
+    }
+    if (str_cmp(html_attr("<a href=\"/x\" class=\"c\">link</a>", "href"), "/x") != 0) {
+        return false;
+    }
+    if (str_cmp(html_unescape("a &amp; b"), "a & b") != 0) {
+        return false;
+    }
+    return true;
+}

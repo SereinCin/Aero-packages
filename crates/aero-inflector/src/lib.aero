@@ -1,0 +1,246 @@
+// aero-inflector
+// Simple English inflections and case conversions for pure-Aero programs.
+//
+// Case conversions: to_snake_case, to_kebab_case, to_camel_case, to_pascal_case.
+// Plurals: pluralize / singularize (the common -s / -es / -ies rules only).
+
+fn _is_sep(c: i64) -> i64 {
+    if ((c == 32) || (c == 45) || (c == 95) || (c == 46)) {
+        return 1;
+    }
+    return 0;
+}
+
+fn _tolower(c: i64) -> i64 {
+    if ((c >= 65) && (c <= 90)) {
+        return c + 32;
+    }
+    return c;
+}
+
+fn _toupper(c: i64) -> i64 {
+    if ((c >= 97) && (c <= 122)) {
+        return c - 32;
+    }
+    return c;
+}
+
+fn _is_upper(c: i64) -> i64 {
+    if ((c >= 65) && (c <= 90)) {
+        return 1;
+    }
+    return 0;
+}
+
+fn _is_vowel(c: i64) -> i64 {
+    if ((c == 97) || (c == 101) || (c == 105) || (c == 111) || (c == 117)) {
+        return 1;
+    }
+    return 0;
+}
+
+// "HelloWorld" / "hello-world" / "hello_world" -> "hello_world"
+fn to_snake_case(s: str) -> str {
+    let src = String::from(s);
+    let n = src.len();
+    let mut out = "";
+    let mut i = 0;
+    while (i < n) {
+        let c = src.at(i);
+        if (_is_sep(c) == 1) {
+            let l = len(out);
+            if ((l > 0) && (String::from(out).at(l - 1) != 95)) {
+                out = out + "_";
+            }
+            i = i + 1;
+            continue;
+        }
+        if (_is_upper(c) == 1) {
+            let l = len(out);
+            if ((l > 0) && (String::from(out).at(l - 1) != 95)) {
+                out = out + "_";
+            }
+            out = out + format("%c", _tolower(c));
+        } else {
+            out = out + format("%c", _tolower(c));
+        }
+        i = i + 1;
+    }
+    let l = len(out);
+    if ((l > 0) && (String::from(out).at(l - 1) == 95)) {
+        return substr(out, 0, l - 1);
+    }
+    return out;
+}
+
+// Same as to_snake_case but joined with '-'.
+fn to_kebab_case(s: str) -> str {
+    let src = String::from(s);
+    let n = src.len();
+    let mut out = "";
+    let mut i = 0;
+    while (i < n) {
+        let c = src.at(i);
+        if (_is_sep(c) == 1) {
+            let l = len(out);
+            if ((l > 0) && (String::from(out).at(l - 1) != 45)) {
+                out = out + "-";
+            }
+            i = i + 1;
+            continue;
+        }
+        if (_is_upper(c) == 1) {
+            let l = len(out);
+            if ((l > 0) && (String::from(out).at(l - 1) != 45)) {
+                out = out + "-";
+            }
+            out = out + format("%c", _tolower(c));
+        } else {
+            out = out + format("%c", _tolower(c));
+        }
+        i = i + 1;
+    }
+    let l = len(out);
+    if ((l > 0) && (String::from(out).at(l - 1) == 45)) {
+        return substr(out, 0, l - 1);
+    }
+    return out;
+}
+
+// "hello_world" / "Hello World" -> "helloWorld"; first char stays lower.
+fn to_camel_case(s: str) -> str {
+    let src = String::from(s);
+    let n = src.len();
+    let mut out = "";
+    let mut cap_next = 0;
+    let mut i = 0;
+    while (i < n) {
+        let c = src.at(i);
+        if (_is_sep(c) == 1) {
+            cap_next = 1;
+            i = i + 1;
+            continue;
+        }
+        if (cap_next == 1) {
+            out = out + format("%c", _toupper(c));
+            cap_next = 0;
+        } else {
+            out = out + format("%c", _tolower(c));
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// "hello_world" -> "HelloWorld"; first char is uppercased.
+fn to_pascal_case(s: str) -> str {
+    let src = String::from(s);
+    let n = src.len();
+    let mut out = "";
+    let mut cap_next = 1;
+    let mut i = 0;
+    while (i < n) {
+        let c = src.at(i);
+        if (_is_sep(c) == 1) {
+            cap_next = 1;
+            i = i + 1;
+            continue;
+        }
+        if (cap_next == 1) {
+            out = out + format("%c", _toupper(c));
+            cap_next = 0;
+        } else {
+            out = out + format("%c", _tolower(c));
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// "cat" -> "cats", "box" -> "boxes", "city" -> "cities", "hero" -> "heroes".
+fn pluralize(w: str) -> str {
+    let n = len(w);
+    if (n == 0) {
+        return w;
+    }
+    let s = String::from(w);
+    let last = s.at(n - 1);
+    if ((last == 115) || (last == 120) || (last == 122)) {
+        return w + "es";
+    }
+    if (n >= 2) {
+        let c2 = s.at(n - 2);
+        if ((last == 104) && ((c2 == 99) || (c2 == 115))) {
+            return w + "es";
+        }
+        if ((last == 121) && (_is_vowel(c2) == 0)) {
+            return substr(w, 0, n - 1) + "ies";
+        }
+    }
+    if (last == 111) {
+        return w + "es";
+    }
+    return w + "s";
+}
+
+// "cats" -> "cat", "boxes" -> "box", "cities" -> "city", "heroes" -> "hero".
+fn singularize(w: str) -> str {
+    let n = len(w);
+    if (n == 0) {
+        return w;
+    }
+    let s = String::from(w);
+    if (n >= 4) {
+        let tail = substr(w, n - 3, n);
+        if (str_cmp(tail, "ies") == 0) {
+            let c = s.at(n - 4);
+            if (_is_vowel(c) == 0) {
+                return substr(w, 0, n - 3) + "y";
+            }
+        }
+    }
+    if (n >= 3) {
+        let tail = substr(w, n - 2, n);
+        if (str_cmp(tail, "es") == 0) {
+            return substr(w, 0, n - 2);
+        }
+    }
+    if ((n >= 2) && (s.at(n - 1) == 115) && (s.at(n - 2) != 115)) {
+        return substr(w, 0, n - 1);
+    }
+    return w;
+}
+
+fn test_inflector_basic() -> bool {
+    if (str_cmp(to_snake_case("HelloWorld"), "hello_world") != 0) {
+        return false;
+    }
+    if (str_cmp(to_kebab_case("HelloWorld"), "hello-world") != 0) {
+        return false;
+    }
+    if (str_cmp(to_camel_case("hello_world"), "helloWorld") != 0) {
+        return false;
+    }
+    if (str_cmp(to_pascal_case("hello_world"), "HelloWorld") != 0) {
+        return false;
+    }
+    if (str_cmp(pluralize("cat"), "cats") != 0) {
+        return false;
+    }
+    if (str_cmp(pluralize("box"), "boxes") != 0) {
+        return false;
+    }
+    if (str_cmp(pluralize("city"), "cities") != 0) {
+        return false;
+    }
+    if (str_cmp(singularize("cats"), "cat") != 0) {
+        return false;
+    }
+    if (str_cmp(singularize("boxes"), "box") != 0) {
+        return false;
+    }
+    if (str_cmp(singularize("cities"), "city") != 0) {
+        return false;
+    }
+    return true;
+}

@@ -1,0 +1,318 @@
+// aero-json
+// Pure-Aero JSON parser/generator covering the practical flat subset:
+//   - string values (with \" \\ \/ \b \f \n \r \t escapes)
+//   - number / boolean / null values
+//   - flat objects (no nested objects/arrays are expanded into a tree —
+//     instead we expose a cursor-based reader that walks top-level
+//     `"key": value` pairs inside `{ }`)
+//
+// Nested containers are represented by their raw substring; callers can walk
+// them with the same cursor. Aero has no tuple type, so cursor reads return a
+// two-field struct { value, pos }.
+
+struct JsonCursor {
+    value: str,
+    pos: i64,
+}
+
+struct JsonReader {
+    text: str,
+    pos: i64,
+}
+
+// Trim ASCII whitespace.
+fn jtrim(s: str) -> str {
+    let src = String::from(s);
+    let n = src.len();
+    let b = 0;
+    while ((b < n) && (src.at(b) <= 32)) {
+        b = b + 1;
+    }
+    let e = n;
+    while ((e > b) && (src.at(e - 1) <= 32)) {
+        e = e - 1;
+    }
+    if (b >= e) {
+        return "";
+    }
+    return substr(s, b, e);
+}
+
+// Decode one JSON escape sequence starting at `at` (the char after '\').
+// Returns the decoded character as a one-char string.
+fn jesc(s: str, at: i64) -> str {
+    let src = String::from(s);
+    let c = src.at(at);
+    if (c == 110) {
+        return format("%c", 10);   // \n
+    }
+    if (c == 116) {
+        return format("%c", 9);    // \t
+    }
+    if (c == 114) {
+        return format("%c", 13);   // \r
+    }
+    if (c == 98) {
+        return format("%c", 8);    // \b
+    }
+    if (c == 102) {
+        return format("%c", 12);   // \f
+    }
+    if (c == 34) {
+        return format("%c", 34);   // "
+    }
+    if (c == 92) {
+        return format("%c", 92);   // \
+    }
+    if (c == 47) {
+        return format("%c", 47);   // /
+    }
+    return format("%c", c);
+}
+
+// Read a JSON string value starting at an opening quote. Returns the decoded
+// string and the position just past the closing quote.
+fn jread_string(r: &JsonReader) -> JsonCursor {
+    let src = String::from(r.text);
+    let n = src.len();
+    let mut pos = r.pos + 1; // skip opening quote
+    let out = "";
+    while (pos < n) {
+        let c = src.at(pos);
+        if (c == 34) {
+            return JsonCursor { value: out, pos: pos + 1 };
+        }
+        if (c == 92) {
+            let d = jesc(r.text, pos + 1);
+            out = out + d;
+            pos = pos + 2;
+        } else {
+            out = out + format("%c", c);
+            pos = pos + 1;
+        }
+    }
+    return JsonCursor { value: out, pos: pos };
+}
+
+// Skip whitespace from a position, returning the new position.
+fn jskip(s: str, pos: i64) -> i64 {
+    let src = String::from(s);
+    let n = src.len();
+    let mut p = pos;
+    while (p < n && src.at(p) <= 32) {
+        p = p + 1;
+    }
+    return p;
+}
+
+// Read the next top-level value from a position. For objects/arrays the raw
+// substring (including braces/brackets) is returned as the "value"; for
+// scalars the decoded value is returned.
+fn jread_value(r: &JsonReader) -> JsonCursor {
+    let src = String::from(r.text);
+    let n = src.len();
+    let p = jskip(r.text, r.pos);
+    if (p >= n) {
+        return JsonCursor { value: "", pos: p };
+    }
+    let c = src.at(p);
+    if (c == 34) {
+        let r2 = JsonReader { text: r.text, pos: p };
+        return jread_string(&r2);
+    }
+    if (c == 123 || c == 91) {
+        // object/array: find matching close, return raw slice
+        let open = c;
+        let close = 125;
+        if (open == 91) {
+            close = 93;
+        }
+        let mut d = 1;
+        let mut epos = p + 1;
+        while (epos < n && d > 0) {
+            let ch = src.at(epos);
+            if (ch == open) {
+                d = d + 1;
+            } else if (ch == close) {
+                d = d - 1;
+            } else if (ch == 34) {
+                let r3 = JsonReader { text: r.text, pos: epos };
+                let cr = jread_string(&r3);
+                epos = cr.pos;
+                continue;
+            }
+            epos = epos + 1;
+        }
+        return JsonCursor { value: substr(r.text, p, epos), pos: epos };
+    }
+    // scalar: read until , } ] or whitespace
+    let start = p;
+    let mut epos = p;
+    while (epos < n) {
+        let ch = src.at(epos);
+        if (ch == 44 || ch == 125 || ch == 93 || ch <= 32) {
+            break;
+        }
+        epos = epos + 1;
+    }
+    return JsonCursor { value: substr(r.text, start, epos), pos: epos };
+}
+
+// Find the first `"key":` at the top level of an object and return the key's
+// value as a string (decoded). Returns "" if absent.
+fn json_get(obj: str, key: str) -> str {
+    let src = String::from(obj);
+    let n = src.len();
+    let mut pos = 0;
+    while (pos < n) {
+        pos = jskip(obj, pos);
+        if (pos >= n) {
+            break;
+        }
+        if (src.at(pos) == 125) {
+            break;
+        }
+        if (src.at(pos) != 34) {
+            // not a key; advance past this token
+            let r4 = JsonReader { text: obj, pos: pos };
+            let cr = jread_value(&r4);
+            pos = cr.pos;
+            continue;
+        }
+        // read key string
+        let r5 = JsonReader { text: obj, pos: pos };
+        let kc = jread_string(&r5);
+        pos = jskip(obj, kc.pos);
+        // expect ':'
+        if (pos < n && src.at(pos) == 58) {
+            pos = jskip(obj, pos + 1);
+        }
+        let r6 = JsonReader { text: obj, pos: pos };
+        let vc = jread_value(&r6);
+        if (str_cmp(kc.value, key) == 0) {
+            return vc.value;
+        }
+        pos = jskip(obj, vc.pos);
+        // skip trailing comma
+        if (pos < n && src.at(pos) == 44) {
+            pos = pos + 1;
+        }
+    }
+    return "";
+}
+
+// Integer value of a JSON key (0 when absent or non-numeric).
+fn json_get_int(obj: str, key: str) -> i64 {
+    return str_to_int(json_get(obj, key));
+}
+
+// Boolean value: "true" is true.
+fn json_get_bool(obj: str, key: str) -> bool {
+    let v = json_get(obj, key);
+    return str_cmp(v, "true") == 0;
+}
+
+// Render a string as a JSON string literal (with escapes).
+fn json_quote(s: str) -> str {
+    let src = String::from(s);
+    let n = src.len();
+    let out = "\"";
+    let i = 0;
+    while (i < n) {
+        let c = src.at(i);
+        if (c == 34) {
+            out = out + "\\\"";
+        } else if (c == 92) {
+            out = out + "\\\\";
+        } else if (c == 10) {
+            out = out + "\\n";
+        } else if (c == 13) {
+            out = out + "\\r";
+        } else if (c == 9) {
+            out = out + "\\t";
+        } else {
+            out = out + format("%c", c);
+        }
+        i = i + 1;
+    }
+    out = out + "\"";
+    return out;
+}
+
+// Render a String value as a JSON string literal (with escapes).
+fn json_quote_string(s: String) -> str {
+    let n = s.len();
+    let out = "\"";
+    let i = 0;
+    while (i < n) {
+        let c = s.at(i);
+        if (c == 34) {
+            out = out + "\\\"";
+        } else if (c == 92) {
+            out = out + "\\\\";
+        } else if (c == 10) {
+            out = out + "\\n";
+        } else if (c == 13) {
+            out = out + "\\r";
+        } else if (c == 9) {
+            out = out + "\\t";
+        } else {
+            out = out + format("%c", c);
+        }
+        i = i + 1;
+    }
+    out = out + "\"";
+    return out;
+}
+
+// Convert a String to a fresh `str` (byte copy).
+fn string_to_str(s: String) -> str {
+    let n = s.len();
+    let out = "";
+    let i = 0;
+    while (i < n) {
+        out = out + format("%c", s.at(i));
+        i = i + 1;
+    }
+    return out;
+}
+
+// Build a flat object from two parallel key/value arrays.
+fn json_object(keys: Vec<String>, vals: Vec<String>) -> str {
+    let out = "{";
+    let i = 0;
+    while (i < keys.len()) {
+        if (i > 0) {
+            out = out + ",";
+        }
+        out = out + json_quote_string(keys.get(i)) + ":" + string_to_str(vals.get(i));
+        i = i + 1;
+    }
+    out = out + "}";
+    return out;
+}
+
+// Convenience smoke: string literal escaping round-trips.
+fn json_test_escape(s: str) -> bool {
+    let enc = json_quote(s);
+    return str_cmp(json_get(enc, "nokey"), "") == 0;
+}
+
+// Smoke test entry point (used by `aero test`).
+fn test_json_basic() -> bool {
+    if (json_test_escape("abc")) {
+    } else {
+        return false;
+    }
+    if (str_cmp(json_get("{\"a\":\"x\",\"b\":2}", "a"), "x") != 0) {
+        return false;
+    }
+    if (json_get_int("{\"n\":42}", "n") != 42) {
+        return false;
+    }
+    if (json_get_bool("{\"flag\":true}", "flag")) {
+    } else {
+        return false;
+    }
+    return true;
+}

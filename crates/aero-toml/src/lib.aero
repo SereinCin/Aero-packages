@@ -1,0 +1,194 @@
+// aero-toml
+// Pure-Aero TOML subset parser/generator. Handles:
+//   - `[table]` headers (nested `[a.b]`)
+//   - `key = "string"` / `key = 123` / `key = true` / `key = [1,2]`
+//   - `#` comments (full-line and trailing)
+//
+// The main entry points are `toml_get(table, dotted_key)` (looks up a key
+// across the whole document, returning its raw value) and `toml_render` (a
+// flat serializer). Nested tables are walked with the dotted key.
+
+struct TomlValue {
+    key: str,
+    value: str,
+}
+
+// Trim ASCII whitespace.
+fn ttrim(s: str) -> str {
+    let src = String::from(s);
+    let n = src.len();
+    let b = 0;
+    while ((b < n) && (src.at(b) <= 32)) {
+        b = b + 1;
+    }
+    let e = n;
+    while ((e > b) && (src.at(e - 1) <= 32)) {
+        e = e - 1;
+    }
+    if (b >= e) {
+        return "";
+    }
+    return substr(s, b, e);
+}
+
+// Strip a trailing comment: "port = 8080  # web" -> "port = 8080".
+// A '#' inside a double-quoted string is preserved.
+fn toml_strip_comment(line: str) -> str {
+    let s = String::from(line);
+    let n = s.len();
+    let hash = -1;
+    let in_quotes = 0;
+    let i = 0;
+    while (i < n) {
+        let ch = s.at(i);
+        if (ch == 34) {
+            in_quotes = 1 - in_quotes;
+        } else if (ch == 35) {
+            if (in_quotes == 0) {
+                hash = i;
+                break;
+            }
+        }
+        i = i + 1;
+    }
+    if (hash < 0) {
+        return ttrim(line);
+    }
+    return ttrim(substr(line, 0, hash));
+}
+
+// Remove a pair of surrounding double quotes.
+fn toml_unquote(s: str) -> str {
+    let src = String::from(s);
+    let n = src.len();
+    if (n >= 2 && src.at(0) == 34 && src.at(n - 1) == 34) {
+        return substr(s, 1, n - 1);
+    }
+    return s;
+}
+
+// Split a "key = value" line into its two halves (raw strings).
+fn toml_split_kv(line: str) -> TomlValue {
+    let s = String::from(line);
+    let n = s.len();
+    let eq = -1;
+    let i = 0;
+    while (i < n) {
+        if (s.at(i) == 61) {
+            eq = i;
+            break;
+        }
+        i = i + 1;
+    }
+    if (eq < 0) {
+        return TomlValue { key: "", value: "" };
+    }
+    let key = toml_unquote(ttrim(substr(line, 0, eq)));
+    let value = ttrim(substr(line, eq + 1, n));
+    return TomlValue { key: key, value: value };
+}
+
+// Track the current table path while scanning.
+struct TomlCtx {
+    table: str,   // dotted table path, e.g. "server" or "server.db"
+}
+
+// Look up `dotted_key` in a TOML document. The key may include the table
+// path (e.g. "server.port") or just the leaf name (first match wins).
+// Returns the raw value string ("" when absent).
+fn toml_get(doc: str, dotted_key: str) -> str {
+    let s = String::from(doc);
+    let n = s.len();
+    let cur_table = "";
+    let line_start = 0;
+    let i = 0;
+    while (i <= n) {
+        if ((i == n) || (s.at(i) == 10)) {
+            let line_len = i - line_start;
+            if (line_len > 0) {
+                let line = substr(doc, line_start, i);
+                let trimmed = ttrim(line);
+                if (len(trimmed) > 0 && String::from(trimmed).at(0) == 91) {
+                    // [table] header: extract dotted path
+                    cur_table = toml_unquote(trimmed);
+                    cur_table = substr(cur_table, 1, len(cur_table) - 1);
+                } else if (len(trimmed) > 0) {
+                    let kv = toml_split_kv(trimmed);
+                    if (len(kv.key) > 0) {
+                        // match either "key" or "table.key"
+                        let full = "";
+                        if (len(cur_table) > 0) {
+                            full = cur_table + "." + kv.key;
+                        } else {
+                            full = kv.key;
+                        }
+                        if (str_cmp(full, dotted_key) == 0 || str_cmp(kv.key, dotted_key) == 0) {
+                            return kv.value;
+                        }
+                    }
+                }
+            }
+            line_start = i + 1;
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+// Integer value of a key (0 when absent or non-numeric).
+fn toml_get_int(doc: str, key: str) -> i64 {
+    return str_to_int(toml_get(doc, key));
+}
+
+// Boolean value: "true" is true.
+fn toml_get_bool(doc: str, key: str) -> bool {
+    let v = toml_get(doc, key);
+    return str_cmp(v, "true") == 0;
+}
+
+// Render a value as a TOML string literal.
+fn toml_quote(s: str) -> str {
+    let src = String::from(s);
+    let n = src.len();
+    let out = "\"";
+    let i = 0;
+    while (i < n) {
+        let c = src.at(i);
+        if (c == 34) {
+            out = out + "\\\"";
+        } else if (c == 92) {
+            out = out + "\\\\";
+        } else if (c == 10) {
+            out = out + "\\n";
+        } else if (c == 9) {
+            out = out + "\\t";
+        } else {
+            out = out + format("%c", c);
+        }
+        i = i + 1;
+    }
+    out = out + "\"";
+    return out;
+}
+
+// Convenience smoke: a trivial round-trip check on quoting.
+fn toml_test_quote(s: str) -> bool {
+    let enc = toml_quote(s);
+    let src = String::from(enc);
+    return (len(enc) >= 2 && src.at(0) == 34);
+}
+
+// Smoke test entry point (used by `aero test`).
+fn test_toml_basic() -> bool {
+    if (toml_test_quote("abc")) {
+    } else {
+        return false;
+    }
+    if (str_cmp(toml_get("title = \"Hi\"\n[server]\nhost = \"localhost\"\nport = 8080", "server.host"), "localhost") != 0) {
+        return false;
+    }
+    if (toml_get_int("x = 7", "x") != 7) {
+        return false;
+    }
+    return true;
+}

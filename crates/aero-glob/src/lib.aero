@@ -1,0 +1,210 @@
+// aero-glob
+// Shell-style glob (wildcard) matching for pure-Aero programs.
+//
+// Supported syntax:
+//   `*`    matches any run of characters within one path segment (no `/`)
+//   `**`   matches any run of characters, including `/` (cross-directory)
+//   `?`    matches exactly one character (not `/`)
+//   `[abc]` `[a-z]` `[^abc]` `[!abc]`  character classes (no `/` inside)
+//   everything else matches literally
+//
+// Entry points:
+//   glob_match(pattern, path)     -> whole-path match, case-sensitive
+//   glob_has_magic(pattern)       -> true if the pattern contains any wildcard
+//   glob_quote(pattern)           -> escape all magic characters
+//
+// The matcher is a simple backtracking algorithm; the two star flavours
+// differ only in whether they may cross `/`.
+
+// Does the pattern contain any glob metacharacter?
+fn glob_has_magic(pat: str) -> bool {
+    let s = String::from(pat);
+    let n = s.len();
+    let i = 0;
+    while (i < n) {
+        let c = s.at(i);
+        if ((c == 42) || (c == 63) || (c == 91)) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// Escape every magic character with a backslash.
+fn glob_quote(pat: str) -> str {
+    let s = String::from(pat);
+    let n = s.len();
+    let out = "";
+    let i = 0;
+    while (i < n) {
+        let c = s.at(i);
+        if ((c == 42) || (c == 63) || (c == 91) || (c == 93) || (c == 92)) {
+            out = out + "\\" + format("%c", c);
+        } else {
+            out = out + format("%c", c);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// Find the closing `]` of the class starting at `pstart`; its index, or -1.
+fn class_end(pat: str, pstart: i64) -> i64 {
+    let s = String::from(pat);
+    let n = s.len();
+    let mut i = pstart + 1;
+    if ((i < n) && ((s.at(i) == 94) || (s.at(i) == 33))) {
+        i = i + 1;
+    }
+    while (i < n) {
+        if (s.at(i) == 93) {
+            return i;
+        }
+        if (s.at(i) == 92) {
+            i = i + 2;
+        } else {
+            i = i + 1;
+        }
+    }
+    return -1;
+}
+
+// Is `tc` inside the `[ ... ]` class starting at `pstart`? 0/1.
+fn gclass_match(pat: str, pstart: i64, tc: i64) -> i64 {
+    let s = String::from(pat);
+    let n = s.len();
+    let mut i = pstart + 1;
+    let mut neg = 0;
+    if ((i < n) && ((s.at(i) == 94) || (s.at(i) == 33))) {
+        neg = 1;
+        i = i + 1;
+    }
+    let mut hit = 0;
+    while (i < n) {
+        let c = s.at(i);
+        if (c == 93) {
+            break;
+        }
+        if (((i + 2) < n) && (s.at(i + 1) == 45) && (s.at(i + 2) != 93)) {
+            if ((tc >= c) && (tc <= s.at(i + 2))) {
+                hit = 1;
+            }
+            i = i + 3;
+        } else {
+            if (tc == c) {
+                hit = 1;
+            }
+            i = i + 1;
+        }
+    }
+    if (neg == 1) {
+        return 1 - hit;
+    }
+    return hit;
+}
+
+// Backtracking match of pattern[ppos..plen) against text[tpos..tlen).
+fn gmatch(pat: str, ppos: i64, plen: i64, txt: str, tpos: i64, tlen: i64) -> bool {
+    if (ppos >= plen) {
+        return tpos >= tlen;
+    }
+    let s = String::from(pat);
+    let c = s.at(ppos);
+    if (c == 42) {
+        // `*` or `**`
+        let mut dstar = 0;
+        let mut qpos = ppos + 1;
+        if ((qpos < plen) && (s.at(qpos) == 42)) {
+            dstar = 1;
+            qpos = qpos + 1;
+        }
+        let mut t = tpos;
+        while (t <= tlen) {
+            if (gmatch(pat, qpos, plen, txt, t, tlen)) {
+                return true;
+            }
+            if (t >= tlen) {
+                break;
+            }
+            // a single `*` may not consume past a `/`
+            if ((dstar == 0) && (String::from(txt).at(t) == 47)) {
+                break;
+            }
+            t = t + 1;
+        }
+        return false;
+    }
+    if (c == 63) {
+        if (tpos >= tlen) {
+            return false;
+        }
+        if (String::from(txt).at(tpos) == 47) {
+            return false;
+        }
+        return gmatch(pat, ppos + 1, plen, txt, tpos + 1, tlen);
+    }
+    if (c == 91) {
+        let ce = class_end(pat, ppos);
+        if (ce < 0) {
+            return false;
+        }
+        if (tpos >= tlen) {
+            return false;
+        }
+        let tc = String::from(txt).at(tpos);
+        if (tc == 47) {
+            return false;
+        }
+        if (gclass_match(pat, ppos, tc) == 0) {
+            return false;
+        }
+        return gmatch(pat, ce + 1, plen, txt, tpos + 1, tlen);
+    }
+    if (tpos >= tlen) {
+        return false;
+    }
+    if (String::from(txt).at(tpos) != c) {
+        return false;
+    }
+    return gmatch(pat, ppos + 1, plen, txt, tpos + 1, tlen);
+}
+
+// Whole-path glob match.
+fn glob_match(pat: str, path: str) -> bool {
+    return gmatch(pat, 0, len(pat), path, 0, len(path));
+}
+
+// Quick smoke tests used by the CI / check step.
+fn test_glob_basic() -> bool {
+    if (glob_match("*.aero", "lib.aero")) {
+    } else {
+        return false;
+    }
+    if (glob_match("*.aero", "lib.txt")) {
+        return false;
+    }
+    if (glob_match("src/**/lib.aero", "src/a/b/lib.aero")) {
+    } else {
+        return false;
+    }
+    if (glob_match("file?.txt", "file1.txt")) {
+    } else {
+        return false;
+    }
+    if (glob_match("file?.txt", "file10.txt")) {
+        return false;
+    }
+    if (glob_match("img[0-9].png", "img5.png")) {
+    } else {
+        return false;
+    }
+    if (glob_match("img[^0-9].png", "imgx.png")) {
+    } else {
+        return false;
+    }
+    if (glob_has_magic("plain.txt")) {
+        return false;
+    }
+    return true;
+}

@@ -1,0 +1,282 @@
+// aero-mime
+// Extension <-> MIME type mapping for pure-Aero programs. Covers the common
+// web / file types; unknown extensions map to "application/octet-stream".
+
+fn _lower(s: str) -> str {
+    let src = String::from(s);
+    let n = src.len();
+    let mut out = "";
+    let mut i = 0;
+    while (i < n) {
+        let c = src.at(i);
+        if ((c >= 65) && (c <= 90)) {
+            out = out + format("%c", c + 32);
+        } else {
+            out = out + format("%c", c);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// MIME type for a file extension (with or without the leading dot).
+fn mime_from_ext(ext: str) -> str {
+    let mut e = _lower(ext);
+    if ((len(e) > 0) && (String::from(e).at(0) == 46)) {
+        e = substr(e, 1, len(e));
+    }
+    if (str_cmp(e, "html") == 0 || str_cmp(e, "htm") == 0) {
+        return "text/html";
+    }
+    if (str_cmp(e, "css") == 0) {
+        return "text/css";
+    }
+    if (str_cmp(e, "js") == 0 || str_cmp(e, "mjs") == 0) {
+        return "text/javascript";
+    }
+    if (str_cmp(e, "json") == 0) {
+        return "application/json";
+    }
+    if (str_cmp(e, "xml") == 0) {
+        return "application/xml";
+    }
+    if (str_cmp(e, "txt") == 0 || str_cmp(e, "aero") == 0 || str_cmp(e, "log") == 0) {
+        return "text/plain";
+    }
+    if (str_cmp(e, "md") == 0) {
+        return "text/markdown";
+    }
+    if (str_cmp(e, "csv") == 0) {
+        return "text/csv";
+    }
+    if (str_cmp(e, "toml") == 0) {
+        return "application/toml";
+    }
+    if (str_cmp(e, "yaml") == 0 || str_cmp(e, "yml") == 0) {
+        return "application/yaml";
+    }
+    if (str_cmp(e, "png") == 0) {
+        return "image/png";
+    }
+    if (str_cmp(e, "jpg") == 0 || str_cmp(e, "jpeg") == 0) {
+        return "image/jpeg";
+    }
+    if (str_cmp(e, "gif") == 0) {
+        return "image/gif";
+    }
+    if (str_cmp(e, "webp") == 0) {
+        return "image/webp";
+    }
+    if (str_cmp(e, "svg") == 0) {
+        return "image/svg+xml";
+    }
+    if (str_cmp(e, "ico") == 0) {
+        return "image/x-icon";
+    }
+    if (str_cmp(e, "bmp") == 0) {
+        return "image/bmp";
+    }
+    if (str_cmp(e, "avif") == 0) {
+        return "image/avif";
+    }
+    if (str_cmp(e, "mp3") == 0) {
+        return "audio/mpeg";
+    }
+    if (str_cmp(e, "wav") == 0) {
+        return "audio/wav";
+    }
+    if (str_cmp(e, "ogg") == 0) {
+        return "audio/ogg";
+    }
+    if (str_cmp(e, "flac") == 0) {
+        return "audio/flac";
+    }
+    if (str_cmp(e, "mp4") == 0) {
+        return "video/mp4";
+    }
+    if (str_cmp(e, "webm") == 0) {
+        return "video/webm";
+    }
+    if (str_cmp(e, "mkv") == 0) {
+        return "video/x-matroska";
+    }
+    if (str_cmp(e, "mov") == 0) {
+        return "video/quicktime";
+    }
+    if (str_cmp(e, "avi") == 0) {
+        return "video/x-msvideo";
+    }
+    if (str_cmp(e, "pdf") == 0) {
+        return "application/pdf";
+    }
+    if (str_cmp(e, "zip") == 0) {
+        return "application/zip";
+    }
+    if (str_cmp(e, "gz") == 0 || str_cmp(e, "tgz") == 0) {
+        return "application/gzip";
+    }
+    if (str_cmp(e, "tar") == 0) {
+        return "application/x-tar";
+    }
+    if (str_cmp(e, "7z") == 0) {
+        return "application/x-7z-compressed";
+    }
+    if (str_cmp(e, "rar") == 0) {
+        return "application/vnd.rar";
+    }
+    if (str_cmp(e, "exe") == 0 || str_cmp(e, "dll") == 0) {
+        return "application/x-msdownload";
+    }
+    if (str_cmp(e, "wasm") == 0) {
+        return "application/wasm";
+    }
+    if (str_cmp(e, "doc") == 0) {
+        return "application/msword";
+    }
+    if (str_cmp(e, "docx") == 0) {
+        return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    }
+    if (str_cmp(e, "xls") == 0) {
+        return "application/vnd.ms-excel";
+    }
+    if (str_cmp(e, "xlsx") == 0) {
+        return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    }
+    if (str_cmp(e, "ppt") == 0) {
+        return "application/vnd.ms-powerpoint";
+    }
+    if (str_cmp(e, "pptx") == 0) {
+        return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+    }
+    if (str_cmp(e, "ttf") == 0) {
+        return "font/ttf";
+    }
+    if (str_cmp(e, "otf") == 0) {
+        return "font/otf";
+    }
+    if (str_cmp(e, "woff") == 0) {
+        return "font/woff";
+    }
+    if (str_cmp(e, "woff2") == 0) {
+        return "font/woff2";
+    }
+    return "application/octet-stream";
+}
+
+// MIME type for a path (extension after the last '.').
+fn mime_from_path(path: str) -> str {
+    let n = len(path);
+    let src = String::from(path);
+    let mut dot = -1;
+    let mut i = 0;
+    while (i < n) {
+        if (src.at(i) == 46) {
+            dot = i;
+        }
+        i = i + 1;
+    }
+    if ((dot < 0) || (dot + 1 >= n)) {
+        return "application/octet-stream";
+    }
+    return mime_from_ext(substr(path, dot + 1, n));
+}
+
+// Typical extension for a MIME type ("" when unknown).
+fn ext_from_mime(mime: str) -> str {
+    let m = _lower(mime);
+    if (str_find(m, "html") >= 0) {
+        return "html";
+    }
+    if (str_find(m, "css") >= 0) {
+        return "css";
+    }
+    if (str_find(m, "javascript") >= 0) {
+        return "js";
+    }
+    if (str_find(m, "json") >= 0) {
+        return "json";
+    }
+    if (str_find(m, "csv") >= 0) {
+        return "csv";
+    }
+    if (str_find(m, "xml") >= 0) {
+        return "xml";
+    }
+    if (str_find(m, "markdown") >= 0) {
+        return "md";
+    }
+    if (str_find(m, "toml") >= 0) {
+        return "toml";
+    }
+    if (str_find(m, "yaml") >= 0) {
+        return "yaml";
+    }
+    if (str_find(m, "png") >= 0) {
+        return "png";
+    }
+    if (str_find(m, "jpeg") >= 0) {
+        return "jpg";
+    }
+    if (str_find(m, "gif") >= 0) {
+        return "gif";
+    }
+    if (str_find(m, "webp") >= 0) {
+        return "webp";
+    }
+    if (str_find(m, "svg") >= 0) {
+        return "svg";
+    }
+    if (str_find(m, "mp3") >= 0) {
+        return "mp3";
+    }
+    if (str_find(m, "wav") >= 0) {
+        return "wav";
+    }
+    if (str_find(m, "ogg") >= 0) {
+        return "ogg";
+    }
+    if (str_find(m, "mp4") >= 0) {
+        return "mp4";
+    }
+    if (str_find(m, "webm") >= 0) {
+        return "webm";
+    }
+    if (str_find(m, "pdf") >= 0) {
+        return "pdf";
+    }
+    if (str_find(m, "gzip") >= 0) {
+        return "gz";
+    }
+    if (str_find(m, "zip") >= 0) {
+        return "zip";
+    }
+    if (str_find(m, "wasm") >= 0) {
+        return "wasm";
+    }
+    if (str_find(m, "octet-stream") >= 0) {
+        return "bin";
+    }
+    return "";
+}
+
+fn test_mime_basic() -> bool {
+    if (str_cmp(mime_from_ext("html"), "text/html") != 0) {
+        return false;
+    }
+    if (str_cmp(mime_from_path("assets/logo.PNG"), "image/png") != 0) {
+        return false;
+    }
+    if (str_cmp(mime_from_ext("unknownxyz"), "application/octet-stream") != 0) {
+        return false;
+    }
+    if (str_cmp(mime_from_ext(""), "application/octet-stream") != 0) {
+        return false;
+    }
+    if (str_cmp(ext_from_mime("image/svg+xml"), "svg") != 0) {
+        return false;
+    }
+    if (str_cmp(ext_from_mime("text/html"), "html") != 0) {
+        return false;
+    }
+    return true;
+}

@@ -1,0 +1,157 @@
+// aero-html-escape
+// HTML entity escaping / unescaping for pure-Aero programs.
+// Covers the five predefined entities plus `&#NN;` (decimal) and `&#xHH;` (hex).
+
+// Escape the five HTML-special characters.
+fn escape_html(s: str) -> str {
+    let src = String::from(s);
+    let n = src.len();
+    let mut out = "";
+    let mut i = 0;
+    while (i < n) {
+        let c = src.at(i);
+        if (c == 38) {
+            out = out + "&amp;";
+        } else if (c == 60) {
+            out = out + "&lt;";
+        } else if (c == 62) {
+            out = out + "&gt;";
+        } else if (c == 34) {
+            out = out + "&quot;";
+        } else if (c == 39) {
+            out = out + "&#39;";
+        } else {
+            out = out + format("%c", c);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// Read a numeric entity starting at `start` (the '#' position): `&#123;` or
+// `&#x1F;`. Returns the codepoint and the number of bytes consumed (incl. ';').
+struct NumEnt {
+    val: i64,
+    n: i64,
+}
+
+fn _read_numeric(s: str, start: i64) -> NumEnt {
+    let n = len(s);
+    let src = String::from(s);
+    let mut p = start + 1;
+    let mut hex = 0;
+    if ((p < n) && ((src.at(p) == 120) || (src.at(p) == 88))) {
+        hex = 1;
+        p = p + 1;
+    }
+    let mut val = 0;
+    let mut got = 0;
+    while (p < n) {
+        let c = src.at(p);
+        if (c == 59) {
+            break;
+        }
+        let mut d = -1;
+        if (hex == 0) {
+            if ((c >= 48) && (c <= 57)) {
+                d = c - 48;
+            }
+        } else if ((c >= 48) && (c <= 57)) {
+            d = c - 48;
+        } else if ((c >= 97) && (c <= 102)) {
+            d = c - 87;
+        } else if ((c >= 65) && (c <= 70)) {
+            d = c - 55;
+        }
+        if (d < 0) {
+            break;
+        }
+        if (hex == 1) {
+            val = val * 16 + d;
+        } else {
+            val = val * 10 + d;
+        }
+        got = 1;
+        p = p + 1;
+    }
+    if ((got == 0) || (p >= n) || (src.at(p) != 59)) {
+        return NumEnt { val: -1, n: 0 };
+    }
+    return NumEnt { val: val, n: p - start + 1 };
+}
+
+// Unescape the predefined entities and numeric entities.
+fn unescape_html(s: str) -> str {
+    let src = String::from(s);
+    let n = src.len();
+    let mut out = "";
+    let mut i = 0;
+    while (i < n) {
+        let c = src.at(i);
+        if (c == 38) {
+            let tail = substr(s, i, n);
+            if (str_find(tail, "&amp;") == 0) {
+                out = out + "&";
+                i = i + 5;
+            } else if (str_find(tail, "&lt;") == 0) {
+                out = out + "<";
+                i = i + 4;
+            } else if (str_find(tail, "&gt;") == 0) {
+                out = out + ">";
+                i = i + 4;
+            } else if (str_find(tail, "&quot;") == 0) {
+                out = out + "\"";
+                i = i + 6;
+            } else if (str_find(tail, "&#39;") == 0) {
+                out = out + "'";
+                i = i + 6;
+            } else if (str_find(tail, "&nbsp;") == 0) {
+                out = out + format("%c", 160);
+                i = i + 6;
+            } else if (str_find(tail, "&#") == 0) {
+                let ne = _read_numeric(s, i + 1);
+                if (ne.val >= 0) {
+                    out = out + format("%c", ne.val);
+                    i = i + 1 + ne.n;
+                } else {
+                    out = out + "&";
+                    i = i + 1;
+                }
+            } else {
+                out = out + "&";
+                i = i + 1;
+            }
+        } else {
+            out = out + format("%c", c);
+            i = i + 1;
+        }
+    }
+    return out;
+}
+
+// Convenience: escape then unescape must return the original text.
+fn html_roundtrip(s: str) -> bool {
+    let enc = escape_html(s);
+    let dec = unescape_html(enc);
+    return str_cmp(dec, s) == 0;
+}
+
+fn test_html_escape_basic() -> bool {
+    if (str_cmp(escape_html("<a href=\"x\">&"), "&lt;a href=&quot;x&quot;&gt;&amp;") != 0) {
+        return false;
+    }
+    if (str_cmp(unescape_html("&lt;b&gt;&amp;&quot;x&quot;&#39;"), "<b>&\"x'") != 0) {
+        return false;
+    }
+    if (str_cmp(unescape_html("&#65;&#x42;"), "AB") != 0) {
+        return false;
+    }
+    if (html_roundtrip("<div class=\"a\">Tom & Jerry</div>")) {
+    } else {
+        return false;
+    }
+    if (str_cmp(unescape_html("no & entity"), "no & entity") != 0) {
+        return false;
+    }
+    return true;
+}

@@ -1,0 +1,316 @@
+// aero-punycode
+// RFC 3492 Punycode (IDNA) encoding / decoding for pure-Aero programs.
+//
+// punycode_encode(utf8) -> ASCII string
+// punycode_decode(puny) -> UTF-8 string
+//
+// Input/output are ordinary Aero strings (UTF-8). The implementation converts
+// between UTF-8 bytes and Unicode scalar values internally. Only arithmetic is
+// used for bit packing to stay within the supported operator set.
+
+// --- digit / character helpers ----------------------------------------------
+
+// Encode one base-36 digit: 0-25 -> 'a'-'z', 26-35 -> '0'-'9'.
+fn _enc_digit(d: i64) -> i64 {
+    if (d < 26) {
+        return 97 + d;
+    }
+    return 48 + (d - 26);
+}
+
+// Decode one base-36 digit; -1 on invalid input.
+fn _dec_digit(c: i64) -> i64 {
+    if ((c >= 97) && (c <= 122)) {
+        return c - 97;
+    }
+    if ((c >= 65) && (c <= 90)) {
+        return c - 65;
+    }
+    if ((c >= 48) && (c <= 57)) {
+        return 26 + (c - 48);
+    }
+    return -1;
+}
+
+// RFC 3492 bias adaptation.
+fn _adapt(delta: i64, numpoints: i64, first: i64) -> i64 {
+    let mut d = delta;
+    if (first == 1) {
+        d = d / 700;
+    } else {
+        d = d / 2;
+    }
+    d = d + d / numpoints;
+    let mut k = 0;
+    while (d > 455) {
+        d = d / 35;
+        k = k + 36;
+    }
+    return k + (36 * d) / (d + 38);
+}
+
+// --- UTF-8 <-> code point ----------------------------------------------------
+
+struct Utf8Ch {
+    cp: i64,
+    n: i64,
+}
+
+// Decode the UTF-8 sequence starting at `pos`; returns the scalar value and
+// the number of bytes consumed.
+fn _utf8_at(s: str, pos: i64) -> Utf8Ch {
+    let src = String::from(s);
+    let b0 = src.at(pos);
+    if (b0 < 128) {
+        return Utf8Ch { cp: b0, n: 1 };
+    }
+    if ((b0 >= 192) && (b0 <= 223)) {
+        let b1 = src.at(pos + 1) % 64;
+        let cp = ((b0 % 32) * 64) + b1;
+        return Utf8Ch { cp: cp, n: 2 };
+    }
+    if ((b0 >= 224) && (b0 <= 239)) {
+        let b1 = src.at(pos + 1) % 64;
+        let b2 = src.at(pos + 2) % 64;
+        let cp = ((b0 % 16) * 4096) + (b1 * 64) + b2;
+        return Utf8Ch { cp: cp, n: 3 };
+    }
+    if ((b0 >= 240) && (b0 <= 247)) {
+        let b1 = src.at(pos + 1) % 64;
+        let b2 = src.at(pos + 2) % 64;
+        let b3 = src.at(pos + 3) % 64;
+        let cp = ((b0 % 8) * 262144) + (b1 * 4096) + (b2 * 64) + b3;
+        return Utf8Ch { cp: cp, n: 4 };
+    }
+    return Utf8Ch { cp: 0, n: 1 };
+}
+
+// Encode one scalar value back to UTF-8 bytes.
+fn _utf8_encode_cp(cp: i64) -> str {
+    if (cp < 128) {
+        return format("%c", cp);
+    }
+    if (cp < 2048) {
+        let b0 = 192 + (cp / 64);
+        let b1 = 128 + (cp % 64);
+        return format("%c", b0) + format("%c", b1);
+    }
+    if (cp < 65536) {
+        let b0 = 224 + (cp / 4096);
+        let b1 = 128 + ((cp / 64) % 64);
+        let b2 = 128 + (cp % 64);
+        return format("%c", b0) + format("%c", b1) + format("%c", b2);
+    }
+    let b0 = 240 + (cp / 262144);
+    let b1 = 128 + ((cp / 4096) % 64);
+    let b2 = 128 + ((cp / 64) % 64);
+    let b3 = 128 + (cp % 64);
+    return format("%c", b0) + format("%c", b1) + format("%c", b2) + format("%c", b3);
+}
+
+// --- core encode / decode ----------------------------------------------------
+
+fn _encode_impl(cps: Vec<i64>) -> str {
+    let mut out = "";
+    let mut b = 0;
+    let mut i = 0;
+    while (i < cps.len()) {
+        let cp = cps.get(i);
+        if (cp < 128) {
+            out = out + format("%c", cp);
+            b = b + 1;
+        }
+        i = i + 1;
+    }
+    let mut h = b;
+    if (b > 0) {
+        out = out + "-";
+    }
+    let mut n = 128;
+    let mut delta = 0;
+    let mut bias = 72;
+    while (h < cps.len()) {
+        let mut m = 2147483647;
+        i = 0;
+        while (i < cps.len()) {
+            let cp = cps.get(i);
+            if ((cp >= n) && (cp < m)) {
+                m = cp;
+            }
+            i = i + 1;
+        }
+        delta = delta + (m - n) * (h + 1);
+        n = m;
+        i = 0;
+        while (i < cps.len()) {
+            let cp = cps.get(i);
+            if (cp < n) {
+                delta = delta + 1;
+            }
+            if (cp == n) {
+                let mut q = delta;
+                let mut k = 36;
+                let mut done = 0;
+                while (done == 0) {
+                    let mut t = 1;
+                    if (k <= bias) {
+                        t = 1;
+                    } else if (k >= bias + 26) {
+                        t = 26;
+                    } else {
+                        t = k - bias;
+                    }
+                    if (q < t) {
+                        done = 1;
+                    } else {
+                        out = out + format("%c", _enc_digit(t + (q - t) % (36 - t)));
+                        q = (q - t) / (36 - t);
+                        k = k + 36;
+                    }
+                }
+                out = out + format("%c", _enc_digit(q));
+                let mut first = 0;
+                if (h == b) {
+                    first = 1;
+                }
+                bias = _adapt(delta, h + 1, first);
+                delta = 0;
+                h = h + 1;
+            }
+            i = i + 1;
+        }
+        delta = delta + 1;
+        n = n + 1;
+    }
+    return out;
+}
+
+fn _decode_impl(puny: str) -> Vec<i64> {
+    let src = String::from(puny);
+    let n = len(puny);
+    let mut out = Vec::new();
+    let mut last_dash = -1;
+    let mut j = 0;
+    while (j < n) {
+        if (src.at(j) == 45) {
+            last_dash = j;
+        }
+        j = j + 1;
+    }
+    let mut b = 0;
+    if (last_dash >= 0) {
+        j = 0;
+        while (j < last_dash) {
+            out.push(src.at(j));
+            j = j + 1;
+        }
+        b = last_dash + 1;
+    }
+    let mut i = 0;
+    let mut nn = 128;
+    let mut bias = 72;
+    while (b < n) {
+        let oldi = i;
+        let mut w = 1;
+        let mut k = 36;
+        let mut done = 0;
+        while (done == 0) {
+            let d = _dec_digit(src.at(b));
+            b = b + 1;
+            i = i + d * w;
+            let mut t = 1;
+            if (k <= bias) {
+                t = 1;
+            } else if (k >= bias + 26) {
+                t = 26;
+            } else {
+                t = k - bias;
+            }
+            if (d < t) {
+                done = 1;
+            } else {
+                w = w * (36 - t);
+                k = k + 36;
+            }
+        }
+        let outlen = out.len();
+        let mut first = 0;
+        if (oldi == 0) {
+            first = 1;
+        }
+        bias = _adapt(i - oldi, outlen + 1, first);
+        nn = nn + i / (outlen + 1);
+        i = i % (outlen + 1);
+        // insert nn at position i (no Vec::insert: rebuild)
+        let mut tmp = Vec::new();
+        j = 0;
+        while (j < i) {
+            tmp.push(out.get(j));
+            j = j + 1;
+        }
+        tmp.push(nn);
+        j = i;
+        while (j < out.len()) {
+            tmp.push(out.get(j));
+            j = j + 1;
+        }
+        out = tmp;
+        i = i + 1;
+    }
+    return out;
+}
+
+// --- public API --------------------------------------------------------------
+
+// Encode a UTF-8 string to Punycode (ASCII).
+fn punycode_encode(s: str) -> str {
+    let n = len(s);
+    let mut cps = Vec::new();
+    let mut pos = 0;
+    while (pos < n) {
+        let ch = _utf8_at(s, pos);
+        cps.push(ch.cp);
+        pos = pos + ch.n;
+    }
+    return _encode_impl(cps);
+}
+
+// Decode a Punycode (ASCII) string back to UTF-8.
+fn punycode_decode(puny: str) -> str {
+    let cps = _decode_impl(puny);
+    let mut out = "";
+    let mut i = 0;
+    while (i < cps.len()) {
+        out = out + _utf8_encode_cp(cps.get(i));
+        i = i + 1;
+    }
+    return out;
+}
+
+fn test_punycode_basic() -> bool {
+    // RFC 3492 example: "münchen" (with umlaut) -> "mnchen-3ya"
+    if (str_cmp(punycode_encode("münchen"), "mnchen-3ya") != 0) {
+        return false;
+    }
+    if (str_cmp(punycode_decode("mnchen-3ya"), "münchen") != 0) {
+        return false;
+    }
+    // Chinese round-trips through an opaque ASCII encoding.
+    let enc = punycode_encode("中文");
+    if (str_cmp(punycode_decode(enc), "中文") != 0) {
+        return false;
+    }
+    // Pure ASCII: encoded with a trailing '-' and decodes back unchanged.
+    if (str_cmp(punycode_encode("abc"), "abc-") != 0) {
+        return false;
+    }
+    if (str_cmp(punycode_decode("abc-"), "abc") != 0) {
+        return false;
+    }
+    // Emoji round-trip (4-byte UTF-8).
+    let enc2 = punycode_encode("hello 😀");
+    if (str_cmp(punycode_decode(enc2), "hello 😀") != 0) {
+        return false;
+    }
+    return true;
+}

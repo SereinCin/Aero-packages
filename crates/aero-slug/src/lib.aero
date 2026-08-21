@@ -1,0 +1,128 @@
+// aero-slug
+// URL-friendly slug generation for pure-Aero programs.
+//
+// slugify(s):
+//   - lowercases ASCII A-Z
+//   - keeps ASCII letters, digits and non-ASCII bytes (e.g. CJK)
+//   - collapses every other byte into a single `-`
+//   - strips leading / trailing `-`
+//
+// slug_ascii(s): same as slugify but drops non-ASCII bytes entirely.
+// slug_has_bad_char(s): true when the string contains bytes that need escaping.
+
+fn _is_alnum(c: i64) -> i64 {
+    if ((c >= 48) && (c <= 57)) {
+        return 1;
+    }
+    if ((c >= 65) && (c <= 90)) {
+        return 1;
+    }
+    if ((c >= 97) && (c <= 122)) {
+        return 1;
+    }
+    return 0;
+}
+
+fn _lower(c: i64) -> i64 {
+    if ((c >= 65) && (c <= 90)) {
+        return c + 32;
+    }
+    return c;
+}
+
+// Default slugifier: keeps letters, digits and non-ASCII bytes.
+fn slugify(s: str) -> str {
+    let src = String::from(s);
+    let n = src.len();
+    let mut out = "";
+    let mut dash = 0;
+    let mut i = 0;
+    while (i < n) {
+        let c = src.at(i);
+        let lc = _lower(c);
+        if ((_is_alnum(lc) == 1) || (c > 127)) {
+            out = out + format("%c", lc);
+            dash = 0;
+        } else if ((len(out) > 0) && (dash == 0)) {
+            out = out + "-";
+            dash = 1;
+        }
+        i = i + 1;
+    }
+    let l = len(out);
+    if ((l > 0) && (String::from(out).at(l - 1) == 45)) {
+        return substr(out, 0, l - 1);
+    }
+    return out;
+}
+
+// ASCII-only slugifier: non-ASCII bytes are dropped.
+fn slug_ascii(s: str) -> str {
+    let src = String::from(s);
+    let n = src.len();
+    let mut out = "";
+    let mut dash = 0;
+    let mut i = 0;
+    while (i < n) {
+        let c = src.at(i);
+        let lc = _lower(c);
+        if (_is_alnum(lc) == 1) {
+            out = out + format("%c", lc);
+            dash = 0;
+        } else if ((len(out) > 0) && (dash == 0)) {
+            out = out + "-";
+            dash = 1;
+        }
+        i = i + 1;
+    }
+    let l = len(out);
+    if ((l > 0) && (String::from(out).at(l - 1) == 45)) {
+        return substr(out, 0, l - 1);
+    }
+    return out;
+}
+
+// True when the string is not already a safe slug (has separators/caps).
+fn slug_has_bad_char(s: str) -> bool {
+    let src = String::from(s);
+    let n = src.len();
+    let mut i = 0;
+    while (i < n) {
+        let c = src.at(i);
+        let lc = _lower(c);
+        if ((_is_alnum(lc) == 0) && (c <= 127)) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn test_slug_basic() -> bool {
+    if (str_cmp(slugify("Hello, World!"), "hello-world") != 0) {
+        return false;
+    }
+    if (str_cmp(slugify("  Aero   Lang  "), "aero-lang") != 0) {
+        return false;
+    }
+    if (str_cmp(slugify("already-a-slug"), "already-a-slug") != 0) {
+        return false;
+    }
+    if (str_cmp(slugify("UPPER"), "upper") != 0) {
+        return false;
+    }
+    if (str_cmp(slug_ascii("Café & Bistro"), "caf-bistro") != 0) {
+        return false;
+    }
+    if (str_cmp(slugify("中文 标题"), "中文-标题") != 0) {
+        return false;
+    }
+    if (slug_has_bad_char("hello world")) {
+    } else {
+        return false;
+    }
+    if (slug_has_bad_char("hello_world")) {
+        return false;
+    }
+    return true;
+}

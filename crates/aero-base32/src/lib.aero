@@ -1,0 +1,183 @@
+// aero-base32
+// Pure-Aero Base32 encode/decode (RFC 4648, standard alphabet, with padding).
+// Encoded output is ASCII, so it round-trips through `str`. Decoded bytes that
+// contain NUL (0x00) cannot be returned as an Aero `str` (NUL-terminated C
+// string) — such binary inputs are out of scope.
+
+// Encode an input string to Base32. Output is padded with '=' to a multiple
+// of 8 characters.
+fn base32_encode(input: str) -> str {
+    let src = String::from(input);
+    let n = src.len();
+    let alpha = String::from("ABCDEFGHIJKLMNOPQRSTUVWXYZ234567");
+    let out = "";
+    let i = 0;
+    while (i + 5 <= n) {
+        let b0 = src.at(i);
+        let b1 = src.at(i + 1);
+        let b2 = src.at(i + 2);
+        let b3 = src.at(i + 3);
+        let b4 = src.at(i + 4);
+        out = out + format("%c", alpha.at((b0 >> 3) & 31));
+        out = out + format("%c", alpha.at((((b0 & 7) << 2) | ((b1 >> 6) & 3)) & 31));
+        out = out + format("%c", alpha.at((b1 >> 1) & 31));
+        out = out + format("%c", alpha.at((((b1 & 1) << 4) | ((b2 >> 4) & 15)) & 31));
+        out = out + format("%c", alpha.at((((b2 & 15) << 1) | ((b3 >> 7) & 1)) & 31));
+        out = out + format("%c", alpha.at((b3 >> 2) & 31));
+        out = out + format("%c", alpha.at((((b3 & 3) << 3) | ((b4 >> 5) & 7)) & 31));
+        out = out + format("%c", alpha.at(b4 & 31));
+        i = i + 5;
+    }
+    let rem = n - i;
+    if (rem == 1) {
+        let b0 = src.at(i);
+        out = out + format("%c", alpha.at((b0 >> 3) & 31));
+        out = out + format("%c", alpha.at((b0 & 7) << 2));
+        out = out + "======";
+    } else if (rem == 2) {
+        let b0 = src.at(i);
+        let b1 = src.at(i + 1);
+        out = out + format("%c", alpha.at((b0 >> 3) & 31));
+        out = out + format("%c", alpha.at((((b0 & 7) << 2) | ((b1 >> 6) & 3)) & 31));
+        out = out + format("%c", alpha.at((b1 >> 1) & 31));
+        out = out + format("%c", alpha.at((b1 & 1) << 4));
+        out = out + "====";
+    } else if (rem == 3) {
+        let b0 = src.at(i);
+        let b1 = src.at(i + 1);
+        let b2 = src.at(i + 2);
+        out = out + format("%c", alpha.at((b0 >> 3) & 31));
+        out = out + format("%c", alpha.at((((b0 & 7) << 2) | ((b1 >> 6) & 3)) & 31));
+        out = out + format("%c", alpha.at((b1 >> 1) & 31));
+        out = out + format("%c", alpha.at((((b1 & 1) << 4) | ((b2 >> 4) & 15)) & 31));
+        out = out + format("%c", alpha.at((b2 & 15) << 1));
+        out = out + "===";
+    } else if (rem == 4) {
+        let b0 = src.at(i);
+        let b1 = src.at(i + 1);
+        let b2 = src.at(i + 2);
+        let b3 = src.at(i + 3);
+        out = out + format("%c", alpha.at((b0 >> 3) & 31));
+        out = out + format("%c", alpha.at((((b0 & 7) << 2) | ((b1 >> 6) & 3)) & 31));
+        out = out + format("%c", alpha.at((b1 >> 1) & 31));
+        out = out + format("%c", alpha.at((((b1 & 1) << 4) | ((b2 >> 4) & 15)) & 31));
+        out = out + format("%c", alpha.at((((b2 & 15) << 1) | ((b3 >> 7) & 1)) & 31));
+        out = out + format("%c", alpha.at((b3 >> 2) & 31));
+        out = out + "=";
+    }
+    return out;
+}
+
+// Base32 char -> 5-bit value, or -1 if not in the alphabet.
+fn base32_val(c: i64) -> i64 {
+    if (c >= 65 && c <= 90) {
+        return c - 65;          // A-Z
+    }
+    if (c >= 50 && c <= 55) {
+        return c - 50 + 26;     // 2-7
+    }
+    return -1;
+}
+
+// Decode a Base32 string. Padding ('=') marks the effective end of data;
+// decoding stops at the first invalid character.
+fn base32_decode(input: str) -> str {
+    let src = String::from(input);
+    let n = src.len();
+    let e = n;
+    let j = 0;
+    while (j < n) {
+        if (src.at(j) == 61) {
+            e = j;
+            break;
+        }
+        j = j + 1;
+    }
+    let out = "";
+    let i = 0;
+    while (i + 8 <= e) {
+        let v0 = base32_val(src.at(i));
+        let v1 = base32_val(src.at(i + 1));
+        let v2 = base32_val(src.at(i + 2));
+        let v3 = base32_val(src.at(i + 3));
+        let v4 = base32_val(src.at(i + 4));
+        let v5 = base32_val(src.at(i + 5));
+        let v6 = base32_val(src.at(i + 6));
+        let v7 = base32_val(src.at(i + 7));
+        if (v0 < 0 || v1 < 0 || v2 < 0 || v3 < 0 || v4 < 0 || v5 < 0 || v6 < 0 || v7 < 0) {
+            break;
+        }
+        out = out + format("%c", (((v0 << 3) | (v1 >> 2)) & 255));
+        out = out + format("%c", ((((v1 & 3) << 6) | (v2 << 1) | (v3 >> 4)) & 255));
+        out = out + format("%c", ((((v3 & 15) << 4) | (v4 >> 1)) & 255));
+        out = out + format("%c", ((((v4 & 1) << 7) | (v5 << 2) | (v6 >> 3)) & 255));
+        out = out + format("%c", ((((v6 & 7) << 5) | v7) & 255));
+        i = i + 8;
+    }
+    // Trailing partial groups (2..7 valid chars -> 1..4 bytes).
+    let rem = e - i;
+    if (rem == 2) {
+        let v0 = base32_val(src.at(i));
+        let v1 = base32_val(src.at(i + 1));
+        if (v0 >= 0 && v1 >= 0) {
+            out = out + format("%c", (((v0 << 3) | (v1 >> 2)) & 255));
+        }
+    } else if (rem == 4) {
+        let v0 = base32_val(src.at(i));
+        let v1 = base32_val(src.at(i + 1));
+        let v2 = base32_val(src.at(i + 2));
+        let v3 = base32_val(src.at(i + 3));
+        if (v0 >= 0 && v1 >= 0 && v2 >= 0 && v3 >= 0) {
+            out = out + format("%c", (((v0 << 3) | (v1 >> 2)) & 255));
+            out = out + format("%c", ((((v1 & 3) << 6) | (v2 << 1) | (v3 >> 4)) & 255));
+        }
+    } else if (rem == 5) {
+        let v0 = base32_val(src.at(i));
+        let v1 = base32_val(src.at(i + 1));
+        let v2 = base32_val(src.at(i + 2));
+        let v3 = base32_val(src.at(i + 3));
+        let v4 = base32_val(src.at(i + 4));
+        if (v0 >= 0 && v1 >= 0 && v2 >= 0 && v3 >= 0 && v4 >= 0) {
+            out = out + format("%c", (((v0 << 3) | (v1 >> 2)) & 255));
+            out = out + format("%c", ((((v1 & 3) << 6) | (v2 << 1) | (v3 >> 4)) & 255));
+            out = out + format("%c", ((((v3 & 15) << 4) | (v4 >> 1)) & 255));
+        }
+    } else if (rem == 7) {
+        let v0 = base32_val(src.at(i));
+        let v1 = base32_val(src.at(i + 1));
+        let v2 = base32_val(src.at(i + 2));
+        let v3 = base32_val(src.at(i + 3));
+        let v4 = base32_val(src.at(i + 4));
+        let v5 = base32_val(src.at(i + 5));
+        let v6 = base32_val(src.at(i + 6));
+        if (v0 >= 0 && v1 >= 0 && v2 >= 0 && v3 >= 0 && v4 >= 0 && v5 >= 0 && v6 >= 0) {
+            out = out + format("%c", (((v0 << 3) | (v1 >> 2)) & 255));
+            out = out + format("%c", ((((v1 & 3) << 6) | (v2 << 1) | (v3 >> 4)) & 255));
+            out = out + format("%c", ((((v3 & 15) << 4) | (v4 >> 1)) & 255));
+            out = out + format("%c", ((((v4 & 1) << 7) | (v5 << 2) | (v6 >> 3)) & 255));
+        }
+    }
+    return out;
+}
+
+// Convenience: round-trip test.
+fn base32_test_roundtrip(s: str) -> bool {
+    return str_cmp(base32_decode(base32_encode(s)), s) == 0;
+}
+
+// Smoke test entry point (used by `aero test`).
+fn test_base32_basic() -> bool {
+    if (base32_test_roundtrip("Hello World! 123")) {
+    } else {
+        return false;
+    }
+    if (base32_test_roundtrip("")) {
+    } else {
+        return false;
+    }
+    if (base32_test_roundtrip("aero language")) {
+    } else {
+        return false;
+    }
+    return true;
+}

@@ -1,0 +1,154 @@
+// aero-base58
+// Pure-Aero Base58 encode/decode (Bitcoin alphabet, no padding).
+// Works on byte strings; output is ASCII so it round-trips through `str`.
+// Decoded bytes containing NUL (0x00) cannot be represented in an Aero `str`.
+//
+// The algorithm treats the input as a big-endian number and repeatedly
+// divides by 58, producing the least-significant digit first. The standard
+// "leading-zero bytes -> '1'" prefix rule is included.
+
+// 58-character Bitcoin alphabet.
+fn b58_alpha() -> str {
+    return "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+}
+
+// Encode a byte string to Base58.
+fn base58_encode(input: str) -> str {
+    let src = String::from(input);
+    let n = src.len();
+    let alpha = String::from(b58_alpha());
+    let out = "";
+    let first = 0;
+    while (first < n && src.at(first) == 0) {
+        first = first + 1;
+    }
+    // Step 1: build the input as a base-256 big number, least-significant
+    // byte first (digits[i] in 0..255), then repeatedly divide by 58.
+    let digits = Vec::new();
+    let j = first;
+    while (j < n) {
+        let mut carry = src.at(j) & 255;
+        let k = 0;
+        while (k < digits.len()) {
+            let cur = digits.get(k) * 256 + carry;
+            digits.set(k, cur % 256);
+            carry = cur / 256;
+            k = k + 1;
+        }
+        while (carry > 0) {
+            digits.push(carry % 256);
+            carry = carry / 256;
+        }
+        j = j + 1;
+    }
+    // Step 2: divide by 58, emitting least-significant base58 digit first.
+    let b58digits = Vec::new();
+    let mut has = digits.len();
+    while (has > 0) {
+        let mut carry = 0;
+        let k = has - 1;
+        let mut kk = has;
+        while (kk > 0) {
+            let cur = carry * 256 + digits.get(kk - 1);
+            digits.set(kk - 1, cur / 58);
+            carry = cur % 58;
+            kk = kk - 1;
+        }
+        b58digits.push(carry);
+        while (has > 0 && digits.get(has - 1) == 0) {
+            has = has - 1;
+        }
+    }
+    // Leading zero bytes become '1's.
+    let z = 0;
+    while (z < first) {
+        out = out + "1";
+        z = z + 1;
+    }
+    // b58digits are least-significant first; emit reversed.
+    let m = b58digits.len();
+    let r = 0;
+    while (r < m) {
+        out = out + format("%c", alpha.at(b58digits.get(m - 1 - r)));
+        r = r + 1;
+    }
+    return out;
+}
+
+// Base58 char -> value, or -1 if invalid.
+fn b58_val(c: i64) -> i64 {
+    let alpha = String::from(b58_alpha());
+    let a = alpha.len();
+    let i = 0;
+    while (i < a) {
+        if (alpha.at(i) == c) {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+// Decode Base58 back to bytes.
+fn base58_decode(input: str) -> str {
+    let src = String::from(input);
+    let n = src.len();
+    let out = "";
+    let digits = Vec::new();
+    let i = 0;
+    while (i < n) {
+        let c = src.at(i);
+        if (c == 49) {
+            // '1' is only meaningful as a leading zero; later ones are invalid.
+            if (digits.len() == 0) {
+                out = out + format("%c", 0);
+                i = i + 1;
+                continue;
+            }
+            i = i + 1;
+            continue;
+        }
+        let v = b58_val(c);
+        if (v < 0) {
+            break;
+        }
+        let carry = v;
+        let k = 0;
+        while (k < digits.len()) {
+            let cur = digits.get(k) * 58 + carry;
+            digits.set(k, cur & 255);
+            carry = cur >> 8;
+            k = k + 1;
+        }
+        while (carry > 0) {
+            digits.push(carry & 255);
+            carry = carry >> 8;
+        }
+        i = i + 1;
+    }
+    let m = digits.len();
+    let r = 0;
+    while (r < m) {
+        out = out + format("%c", digits.get(m - 1 - r));
+        r = r + 1;
+    }
+    return out;
+}
+
+// Convenience: round-trip test (only for inputs without NUL bytes).
+fn base58_test_roundtrip(s: str) -> bool {
+    return str_cmp(base58_decode(base58_encode(s)), s) == 0;
+}
+
+// Smoke test entry point (used by `aero test`).
+fn test_base58_basic() -> bool {
+    if (base58_test_roundtrip("Hello World")) {
+    } else {
+        return false;
+    }
+    if (base58_test_roundtrip("Aero!")) {
+    } else {
+        return false;
+    }
+    return true;
+}
