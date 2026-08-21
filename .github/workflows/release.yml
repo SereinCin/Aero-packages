@@ -1,0 +1,32 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install zip
+        run: sudo apt-get install -y zip
+
+      - name: Package crates
+        run: |
+          chmod +x ./scripts/pack.sh
+          ./scripts/pack.sh ${{ github.ref_name }}
+
+      - name: Publish Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            ./dist/*.zip
+            ./dist/packages.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
