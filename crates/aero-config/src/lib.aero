@@ -1,0 +1,176 @@
+// aero-config
+// Unified config access. Reads a file, sniffs the format from the extension
+// (.toml / .yaml / .json), and exposes flat key->value getters. It works on
+// the common flat subset shared by all three formats:
+//   TOML:  key = "value"
+//   YAML:  key: value
+//   JSON:  "key": "value"
+// Nested structures are out of scope; use the format-specific crates there.
+
+struct Config {
+    raw: str,       // whole file contents
+    source: str,    // file path
+}
+
+const CFG_TOML: i64 = 0;
+const CFG_YAML: i64 = 1;
+const CFG_JSON: i64 = 2;
+const CFG_UNKNOWN: i64 = 3;
+
+// Detect the config format from the file extension.
+fn config_format(source: str) -> i64 {
+    let s = String::from(source);
+    let n = s.len();
+    let dot = -1;
+    let i = 0;
+    while (i < n) {
+        if (s.at(i) == 46) {
+            dot = i;
+        }
+        i = i + 1;
+    }
+    if (dot < 0) {
+        return CFG_UNKNOWN;
+    }
+    let ext = "";
+    let j = dot + 1;
+    while (j < n) {
+        ext = ext + format("%c", s.at(j));
+        j = j + 1;
+    }
+    if (str_cmp(ext, "toml") == 0) {
+        return CFG_TOML;
+    }
+    if (str_cmp(ext, "yaml") == 0 || str_cmp(ext, "yml") == 0) {
+        return CFG_YAML;
+    }
+    if (str_cmp(ext, "json") == 0) {
+        return CFG_JSON;
+    }
+    return CFG_UNKNOWN;
+}
+
+// Read a config file into a Config. A missing file yields empty raw text.
+fn config_load(source: str) -> Config {
+    let content = read_file(source);
+    return Config { raw: content, source: source };
+}
+
+// Trim ASCII whitespace from both ends.
+fn config_trim(s: str) -> str {
+    let src = String::from(s);
+    let n = src.len();
+    let b = 0;
+    while ((b < n) && (src.at(b) <= 32)) {
+        b = b + 1;
+    }
+    let e = n;
+    while ((e > b) && (src.at(e - 1) <= 32)) {
+        e = e - 1;
+    }
+    if (b >= e) {
+        return "";
+    }
+    return substr(s, b, e);
+}
+
+// Remove a pair of surrounding double quotes.
+fn config_unquote(s: str) -> str {
+    let src = String::from(s);
+    let n = src.len();
+    if (n >= 2 && src.at(0) == 34 && src.at(n - 1) == 34) {
+        return substr(s, 1, n - 1);
+    }
+    return s;
+}
+
+// A parsed key/value pair from one line.
+struct KvPair {
+    key: str,
+    value: str,
+}
+
+// Split a line on its first separator. '=' wins over ':' only when it comes
+// first, which matches the flat subset of TOML/YAML/JSON lines. Surrounding
+// double quotes on key and value are stripped.
+fn config_split_kv(line: str) -> KvPair {
+    let s = String::from(line);
+    let n = s.len();
+    let eq = -1;
+    let colon = -1;
+    let i = 0;
+    while (i < n) {
+        let ch = s.at(i);
+        if (ch == 61 && eq < 0) {
+            eq = i;
+        }
+        if (ch == 58 && colon < 0) {
+            colon = i;
+        }
+        i = i + 1;
+    }
+    let sep = eq;
+    if (sep < 0 || (colon >= 0 && colon < sep)) {
+        sep = colon;
+    }
+    if (sep < 0) {
+        return KvPair { key: "", value: "" };
+    }
+    let key = config_unquote(config_trim(substr(line, 0, sep)));
+    let value = config_unquote(config_trim(substr(line, sep + 1, n)));
+    return KvPair { key: key, value: value };
+}
+
+// Find a key across all lines and return its string value ("" if absent).
+fn config_get_str(cfg: &Config, key: str) -> str {
+    let content = String::from(cfg.raw);
+    let n = content.len();
+    let line_start = 0;
+    let i = 0;
+    while (i <= n) {
+        if ((i == n) || (content.at(i) == 10)) {
+            let line_len = i - line_start;
+            if (line_len > 0) {
+                let kv = config_split_kv(substr(cfg.raw, line_start, i));
+                if ((str_cmp(kv.key, key) == 0) && (len(kv.value) > 0)) {
+                    return kv.value;
+                }
+            }
+            line_start = i + 1;
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+// Integer value; 0 when absent or unparseable.
+fn config_get_int(cfg: &Config, key: str) -> i64 {
+    return str_to_int(config_get_str(cfg, key));
+}
+
+// Boolean value: "true"/"1"/"yes" (or "True"/"TRUE") are true.
+fn config_get_bool(cfg: &Config, key: str) -> bool {
+    let v = config_get_str(cfg, key);
+    if (str_cmp(v, "true") == 0 || str_cmp(v, "1") == 0 || str_cmp(v, "yes") == 0) {
+        return true;
+    }
+    if (str_cmp(v, "True") == 0 || str_cmp(v, "TRUE") == 0) {
+        return true;
+    }
+    return false;
+}
+
+// Number of newline-separated lines in the config.
+fn config_line_count(cfg: &Config) -> i64 {
+    let content = String::from(cfg.raw);
+    let n = content.len();
+    let count = 0;
+    let i = 0;
+    while (i < n) {
+        if (content.at(i) == 10) {
+            count = count + 1;
+        }
+        i = i + 1;
+    }
+    return count;
+}

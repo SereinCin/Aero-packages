@@ -1,0 +1,37 @@
+// aero-log
+// Structured logging extensions. Note: the base level functions
+// (log_error / log_warn / log_info / log_debug) are provided by the Aero
+// standard-library prelude, so this crate adds the structured parts:
+// level-tagged entries and aligned key=value output.
+
+const LOG_DEBUG: i64 = 0;
+const LOG_INFO: i64 = 1;
+const LOG_WARN: i64 = 2;
+const LOG_ERROR: i64 = 3;
+
+// Level-tagged single entry: log_at(LOG_WARN, "disk full").
+fn log_at(level: i64, msg: str) {
+    if (level == LOG_DEBUG) {
+        print("[DEBUG] %s\n", msg);
+    } else if (level == LOG_INFO) {
+        print("[INFO]  %s\n", msg);
+    } else if (level == LOG_WARN) {
+        print("[WARN]  %s\n", msg);
+    } else {
+        print("[ERROR] %s\n", msg);
+    }
+}
+
+// Structured line:  key=value
+fn log_kv(key: str, value: str) {
+    print("  %s=%s\n", key, value);
+}
+
+fn log_kv_int(key: str, value: i64) {
+    print("  %s=%d\n", key, value);
+}
+
+// Section header with separator lines.
+fn log_section(title: str) {
+    print("--- %s ---\n", title);
+}

@@ -1,0 +1,72 @@
+// aero-cli
+// Command-line parsing (clap-lite). Thin wrapper over the builtin
+// arg_count()/arg(i): arg(0) is the program name, positionals start at 1.
+// Missing flags/values return "" / false / 0.
+//
+// Names use the `args_*` prefix because the Aero prelude already reserves
+// `cli_has` / `cli_get` / `cli_positional` (as non-functional stubs).
+
+// Number of positional args (excluding the program name).
+fn args_count() -> i64 {
+    let n = arg_count();
+    if (n <= 0) {
+        return 0;
+    }
+    return n - 1;
+}
+
+// True if the flag (e.g. "--verbose" or "-v") appears anywhere in argv.
+fn args_has(flag: str) -> bool {
+    let n = arg_count();
+    let i = 0;
+    while (i < n) {
+        let a = arg(i);
+        if (str_cmp(a, flag) == 0) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// Value that follows a flag ("--output file.txt" -> "file.txt").
+// Returns "" if the flag is missing or has no following value.
+fn args_get(flag: str) -> str {
+    let n = arg_count();
+    let i = 0;
+    while (i < n) {
+        let a = arg(i);
+        if (str_cmp(a, flag) == 0) {
+            if (i + 1 < n) {
+                return arg(i + 1);
+            }
+            return "";
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+// Positional argument at index (0-based, after the program name).
+// Out of range returns "".
+fn args_pos(i: i64) -> str {
+    if (i < 0 || i >= args_count()) {
+        return "";
+    }
+    return arg(i + 1);
+}
+
+// All positional args joined with single spaces.
+fn args_join() -> str {
+    let out = "";
+    let n = args_count();
+    let i = 0;
+    while (i < n) {
+        if (i > 0) {
+            out = out + " ";
+        }
+        out = out + args_pos(i);
+        i = i + 1;
+    }
+    return out;
+}

@@ -1,0 +1,58 @@
+// aero-hex
+// Pure-Aero hex encode/decode. Encode emits lowercase hex digits; decode
+// accepts mixed case and stops at the first non-hex character. Output bytes
+// that are NUL (0x00) cannot be represented in an Aero `str` (NUL-terminated),
+// so decoding "00" is out of scope.
+
+// Encode bytes as lowercase hex, two chars per byte.
+fn hex_encode(input: str) -> str {
+    let src = String::from(input);
+    let hex_chars = String::from("0123456789abcdef");
+    let out = "";
+    let i = 0;
+    while (i < src.len()) {
+        let b = src.at(i);
+        out = out + format("%c", hex_chars.at((b >> 4) & 15));
+        out = out + format("%c", hex_chars.at(b & 15));
+        i = i + 1;
+    }
+    return out;
+}
+
+// Hex digit -> value, or -1 if invalid.
+fn hex_val(c: i64) -> i64 {
+    if (c >= 48 && c <= 57) {
+        return c - 48;          // 0-9
+    }
+    if (c >= 97 && c <= 102) {
+        return c - 97 + 10;     // a-f
+    }
+    if (c >= 65 && c <= 70) {
+        return c - 65 + 10;     // A-F
+    }
+    return -1;
+}
+
+// Decode hex back to bytes. Pairs are consumed left to right; a lone
+// trailing digit is ignored.
+fn hex_decode(input: str) -> str {
+    let src = String::from(input);
+    let n = src.len();
+    let out = "";
+    let i = 0;
+    while (i + 1 < n) {
+        let hi = hex_val(src.at(i));
+        let lo = hex_val(src.at(i + 1));
+        if (hi < 0 || lo < 0) {
+            break;
+        }
+        out = out + format("%c", ((hi << 4) | lo) & 255);
+        i = i + 2;
+    }
+    return out;
+}
+
+// Convenience: "hello" -> "68656c6c6f"
+fn hex_test_roundtrip(s: str) -> bool {
+    return str_cmp(hex_decode(hex_encode(s)), s) == 0;
+}

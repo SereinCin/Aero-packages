@@ -1,0 +1,115 @@
+// aero-yaml
+// Minimal YAML subset parser. Handles flat `key: value` mappings, `- item`
+// sequence entries, `#` comments (full-line and trailing), and double-quoted
+// string values. No anchors/aliases/tags, block scalars, or indentation.
+
+struct YamlValue {
+    key: str,
+    value: str,
+}
+
+// Trim ASCII whitespace from both ends.
+fn trim(s: str) -> str {
+    let src = String::from(s);
+    let n = src.len();
+    let b = 0;
+    while ((b < n) && (src.at(b) <= 32)) {
+        b = b + 1;
+    }
+    let e = n;
+    while ((e > b) && (src.at(e - 1) <= 32)) {
+        e = e - 1;
+    }
+    if (b >= e) {
+        return "";
+    }
+    return substr(s, b, e);
+}
+
+// Strip a trailing inline comment: "port: 8080  # web" -> "port: 8080".
+// A '#' inside a double-quoted string is preserved. The quote state is an
+// integer flag (0/1) because the compiler does not support `!` / bool ==.
+fn yaml_strip_comment(line: str) -> str {
+    let s = String::from(line);
+    let n = s.len();
+    let hash = -1;
+    let in_quotes = 0;
+    let i = 0;
+    while (i < n) {
+        let ch = s.at(i);
+        if (ch == 34) {
+            in_quotes = 1 - in_quotes;
+        } else if (ch == 35) {
+            if (in_quotes == 0) {
+                hash = i;
+                break;
+            }
+        }
+        i = i + 1;
+    }
+    if (hash < 0) {
+        return line;
+    }
+    return trim(substr(line, 0, hash));
+}
+
+// Remove a pair of surrounding double quotes.
+fn yaml_unquote(s: str) -> str {
+    let src = String::from(s);
+    let n = src.len();
+    if (n >= 2 && src.at(0) == 34 && src.at(n - 1) == 34) {
+        return substr(s, 1, n - 1);
+    }
+    return s;
+}
+
+// Split "key: value" on the first colon. A bare key yields an empty value.
+fn yaml_parse_line(line: str) -> YamlValue {
+    let cleaned = yaml_strip_comment(line);
+    let s = String::from(cleaned);
+    let n = s.len();
+    let colon = -1;
+    let i = 0;
+    while (i < n) {
+        if (s.at(i) == 58) {
+            colon = i;
+            break;
+        }
+        i = i + 1;
+    }
+    if (colon < 0) {
+        return YamlValue { key: "", value: "" };
+    }
+    let key = yaml_unquote(trim(substr(cleaned, 0, colon)));
+    let value = yaml_unquote(trim(substr(cleaned, colon + 1, n)));
+    return YamlValue { key: key, value: value };
+}
+
+// True for sequence items ("- ...").
+fn yaml_is_list_item(line: str) -> bool {
+    let t = trim(line);
+    if (len(t) < 1) {
+        return false;
+    }
+    return String::from(t).at(0) == 45;
+}
+
+// True for blank or comment-only lines.
+fn yaml_is_blank(line: str) -> bool {
+    let t = trim(line);
+    if (len(t) == 0) {
+        return true;
+    }
+    return String::from(t).at(0) == 35;
+}
+
+// Sequence item value: "- foo" -> "foo".
+fn yaml_list_value(line: str) -> str {
+    let cleaned = yaml_strip_comment(line);
+    let t = trim(cleaned);
+    let n = len(t);
+    if (n < 2) {
+        return "";
+    }
+    return trim(substr(t, 1, n));
+}

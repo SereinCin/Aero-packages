@@ -1,0 +1,86 @@
+// aero-unicode
+// Pure-Aero Unicode helpers. Covers the practical subset:
+//   - Latin-1 case mapping (ASCII + U+00C0..U+00FF), byte-oriented
+//   - UTF-8 code-point counting / indexing (via the utf8_len/utf8_at builtins)
+//   - ASCII character classification
+// Full NFC/NFD normalization tables are out of scope for now.
+
+// Byte (Latin-1 code point) -> lowercase equivalent.
+fn char_to_lower(c: i64) -> i64 {
+    if (c >= 65 && c <= 90) {
+        return c + 32;
+    }
+    if (c >= 192 && c <= 214) {
+        return c + 32;      // À-Ö
+    }
+    if (c >= 216 && c <= 222) {
+        return c + 32;      // Ø-Þ
+    }
+    return c;
+}
+
+// Byte (Latin-1 code point) -> uppercase equivalent.
+fn char_to_upper(c: i64) -> i64 {
+    if (c >= 97 && c <= 122) {
+        return c - 32;
+    }
+    if (c >= 224 && c <= 246) {
+        return c - 32;      // à-ö
+    }
+    if (c >= 248 && c <= 254) {
+        return c - 32;      // ø-þ
+    }
+    return c;
+}
+
+fn str_to_lower(input: str) -> str {
+    let src = String::from(input);
+    let out = "";
+    let i = 0;
+    while (i < src.len()) {
+        out = out + format("%c", char_to_lower(src.at(i)));
+        i = i + 1;
+    }
+    return out;
+}
+
+fn str_to_upper(input: str) -> str {
+    let src = String::from(input);
+    let out = "";
+    let i = 0;
+    while (i < src.len()) {
+        out = out + format("%c", char_to_upper(src.at(i)));
+        i = i + 1;
+    }
+    return out;
+}
+
+// Number of Unicode code points (not bytes). Uses the utf8_len builtin.
+fn unicode_len(input: str) -> i64 {
+    return utf8_len(input);
+}
+
+// Code point at a character index, or -1 when out of range.
+fn unicode_at(input: str, index: i64) -> i64 {
+    return utf8_at(input, index);
+}
+
+fn is_ascii_digit(c: i64) -> bool {
+    return c >= 48 && c <= 57;
+}
+
+fn is_ascii_alpha(c: i64) -> bool {
+    return (c >= 65 && c <= 90) || (c >= 97 && c <= 122);
+}
+
+fn is_ascii_alnum(c: i64) -> bool {
+    return is_ascii_alpha(c) || is_ascii_digit(c);
+}
+
+fn is_ascii_whitespace(c: i64) -> bool {
+    return c == 32 || c == 9 || c == 10 || c == 13;
+}
+
+fn is_ascii(c: i64) -> bool {
+    return c >= 0 && c <= 127;
+}

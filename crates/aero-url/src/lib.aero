@@ -1,0 +1,129 @@
+// aero-url
+// Pure-Aero URL utilities: percent-encoding plus a light parser that
+// splits `scheme://host[:port]/path?query` into a Url struct. Query strings
+// are not further split into key=value pairs yet.
+
+struct Url {
+    scheme: str,
+    host: str,
+    port: i64,
+    path: str,
+    query: str,
+}
+
+// One byte -> "%XX" (uppercase hex).
+fn url_encode_byte(b: i64) -> str {
+    let hex_chars = String::from("0123456789ABCDEF");
+    return format("%c%c%c", 37, hex_chars.at((b >> 4) & 15), hex_chars.at(b & 15));
+}
+
+// Percent-encode an input string. Unreserved characters
+// (A-Z a-z 0-9 - _ . ~) are left as-is; everything else is "%XX".
+fn url_encode(input: str) -> str {
+    let src = String::from(input);
+    let out = "";
+    let i = 0;
+    while (i < src.len()) {
+        let c = src.at(i);
+        let unreserved = (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122);
+        if (unreserved || c == 45 || c == 46 || c == 95 || c == 126) {
+            out = out + format("%c", c);
+        } else {
+            out = out + url_encode_byte(c);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// Hex digit -> value (0 on invalid, fine for decoding since %xx was valid).
+fn hex_digit_val(c: i64) -> i64 {
+    if (c >= 48 && c <= 57) {
+        return c - 48;
+    }
+    if (c >= 65 && c <= 70) {
+        return c - 55;
+    }
+    if (c >= 97 && c <= 102) {
+        return c - 87;
+    }
+    return 0;
+}
+
+// Decode %XX escapes back to bytes. Literal '%' not followed by two hex
+// digits is kept as-is.
+fn url_decode(input: str) -> str {
+    let src = String::from(input);
+    let n = src.len();
+    let out = "";
+    let i = 0;
+    while (i < n) {
+        let c = src.at(i);
+        if (c == 37 && i + 2 < n) {
+            let hi = hex_digit_val(src.at(i + 1));
+            let lo = hex_digit_val(src.at(i + 2));
+            out = out + format("%c", ((hi << 4) | lo) & 255);
+            i = i + 3;
+        } else {
+            out = out + format("%c", c);
+            i = i + 1;
+        }
+    }
+    return out;
+}
+
+// Parse "scheme://host[:port]/path?query". Any part may be missing;
+// missing port is 0 and a missing path defaults to "/".
+fn url_parse(input: str) -> Url {
+    let scheme = "";
+    let rest = input;
+    let scheme_end = str_find(input, "://");
+    if (scheme_end > 0) {
+        scheme = substr(input, 0, scheme_end);
+        rest = substr(input, scheme_end + 3, len(input));
+    }
+    // rest = authority/path?query  (authority = host[:port])
+    let host = "";
+    let port = 0;
+    let path = "/";
+    let query = "";
+    let path_start = str_find(rest, "/");
+    let rest_len = len(rest);
+    let authority = rest;
+    if (path_start >= 0) {
+        authority = substr(rest, 0, path_start);
+        path = substr(rest, path_start, rest_len);
+    }
+    // host[:port]
+    let colon = str_find(authority, ":");
+    if (colon >= 0) {
+        host = substr(authority, 0, colon);
+        port = str_to_int(substr(authority, colon + 1, len(authority)));
+    } else {
+        host = authority;
+    }
+    // split query off path ("?query")
+    let qpos = str_find(path, "?");
+    if (qpos >= 0) {
+        query = substr(path, qpos + 1, len(path));
+        path = substr(path, 0, qpos);
+    }
+    return Url { scheme: scheme, host: host, port: port, path: path, query: query };
+}
+
+// Rebuild a URL string from a parsed Url.
+fn url_to_string(u: Url) -> str {
+    let out = "";
+    if (len(u.scheme) > 0) {
+        out = out + u.scheme + "://";
+    }
+    out = out + u.host;
+    if (u.port > 0) {
+        out = out + ":" + format("%d", u.port);
+    }
+    out = out + u.path;
+    if (len(u.query) > 0) {
+        out = out + "?" + u.query;
+    }
+    return out;
+}

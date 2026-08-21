@@ -1,0 +1,115 @@
+// aero-base64
+// Pure-Aero Base64 encode/decode (RFC 4648 standard alphabet, with padding).
+// Encoded output is ASCII, so it round-trips through `str`. Decoded bytes
+// that contain NUL (0x00) cannot be returned as an Aero `str` (it is a
+// NUL-terminated C string) — such binary inputs are out of scope.
+
+// Encode an input string to Base64. Output is padded with '=' to a
+// multiple of 4 characters.
+fn base64_encode(input: str) -> str {
+    let src = String::from(input);
+    let n = src.len();
+    let alpha = String::from("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/");
+    let out = "";
+    let i = 0;
+    while (i + 3 <= n) {
+        let b0 = src.at(i);
+        let b1 = src.at(i + 1);
+        let b2 = src.at(i + 2);
+        out = out + format("%c", alpha.at((b0 >> 2) & 63));
+        out = out + format("%c", alpha.at(((b0 & 3) << 4) | ((b1 >> 4) & 15)));
+        out = out + format("%c", alpha.at(((b1 & 15) << 2) | ((b2 >> 6) & 3)));
+        out = out + format("%c", alpha.at(b2 & 63));
+        i = i + 3;
+    }
+    let rem = n - i;
+    if (rem == 1) {
+        let b0 = src.at(i);
+        out = out + format("%c", alpha.at((b0 >> 2) & 63));
+        out = out + format("%c", alpha.at((b0 & 3) << 4));
+        out = out + "==";
+    } else if (rem == 2) {
+        let b0 = src.at(i);
+        let b1 = src.at(i + 1);
+        out = out + format("%c", alpha.at((b0 >> 2) & 63));
+        out = out + format("%c", alpha.at(((b0 & 3) << 4) | ((b1 >> 4) & 15)));
+        out = out + format("%c", alpha.at((b1 & 15) << 2));
+        out = out + "=";
+    }
+    return out;
+}
+
+// Base64 char -> 6-bit value, or -1 if not in the alphabet.
+fn b64_val(c: i64) -> i64 {
+    if (c >= 65 && c <= 90) {
+        return c - 65;          // A-Z
+    }
+    if (c >= 97 && c <= 122) {
+        return c - 97 + 26;     // a-z
+    }
+    if (c >= 48 && c <= 57) {
+        return c - 48 + 52;     // 0-9
+    }
+    if (c == 43) {
+        return 62;              // +
+    }
+    if (c == 47) {
+        return 63;              // /
+    }
+    return -1;
+}
+
+// Decode a Base64 string. Padding ('=') marks the effective end of data;
+// decoding stops at the first invalid character.
+fn base64_decode(input: str) -> str {
+    let src = String::from(input);
+    let n = src.len();
+    // Effective length: everything up to the first '=' (padding).
+    let e = n;
+    let j = 0;
+    while (j < n) {
+        if (src.at(j) == 61) {
+            e = j;
+            break;
+        }
+        j = j + 1;
+    }
+    let out = "";
+    let i = 0;
+    while (i + 4 <= e) {
+        let v0 = b64_val(src.at(i));
+        let v1 = b64_val(src.at(i + 1));
+        let v2 = b64_val(src.at(i + 2));
+        let v3 = b64_val(src.at(i + 3));
+        if (v0 < 0 || v1 < 0 || v2 < 0 || v3 < 0) {
+            break;
+        }
+        out = out + format("%c", (((v0 << 2) | (v1 >> 4)) & 255));
+        out = out + format("%c", (((v1 << 4) | (v2 >> 2)) & 255));
+        out = out + format("%c", (((v2 << 6) | v3) & 255));
+        i = i + 4;
+    }
+    // Trailing partial group ("XY" -> 1 byte, "XYZ" -> 2 bytes).
+    let rem = e - i;
+    if (rem == 2) {
+        let v0 = b64_val(src.at(i));
+        let v1 = b64_val(src.at(i + 1));
+        if (v0 >= 0 && v1 >= 0) {
+            out = out + format("%c", (((v0 << 2) | (v1 >> 4)) & 255));
+        }
+    } else if (rem == 3) {
+        let v0 = b64_val(src.at(i));
+        let v1 = b64_val(src.at(i + 1));
+        let v2 = b64_val(src.at(i + 2));
+        if (v0 >= 0 && v1 >= 0 && v2 >= 0) {
+            out = out + format("%c", (((v0 << 2) | (v1 >> 4)) & 255));
+            out = out + format("%c", (((v1 << 4) | (v2 >> 2)) & 255));
+        }
+    }
+    return out;
+}
+
+// Convenience: "HELLO" -> "SEVMTE8="
+fn base64_test_roundtrip(s: str) -> bool {
+    return str_cmp(base64_decode(base64_encode(s)), s) == 0;
+}

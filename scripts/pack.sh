@@ -45,13 +45,31 @@ desc() {
 
 echo "==> 打包版本: $VERSION"
 
+# 打包工具：优先用 `zip`（CI/ubuntu 自带）；开发机（Windows）没有 zip 时
+# 用 python 的 zipfile 兜底，保证 ./scripts/pack.sh 在本地也能跑通。
+make_zip() {  # make_zip <zip_path> <dir>
+  if command -v zip >/dev/null 2>&1; then
+    ( cd "$2" && zip -qr "$1" ./* )
+  else
+    python -c '
+import sys, zipfile, os
+out, root = sys.argv[1], sys.argv[2]
+with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+    for base, dirs, files in os.walk(root):
+        for f in files:
+            p = os.path.join(base, f)
+            z.write(p, os.path.relpath(p, root).replace(os.sep, "/"))
+' "$1" "$2"
+  fi
+}
+
 # ---- 打包所有 crate（进入目录打包，避免多一层 <name>/）----
 CRATES=()
 for crate in "$ROOT"/crates/*/; do
   [ -d "$crate" ] || continue
   name="$(basename "$crate")"
   CRATES+=("$name")
-  ( cd "$crate" && zip -qr "$DIST/${name}.zip" ./* )
+  make_zip "$DIST/${name}.zip" "$crate"
   echo "    OK ${name}.zip"
 done
 
@@ -70,10 +88,11 @@ JSON="$DIST/packages.json"
     fi
     checksum="$(sha256sum "$DIST/${name}.zip" | awk '{print $1}')"
     descr="$(desc "$name")"
+    ver="${VERSION#v}"
     cat <<EOF
     {
       "name": "$name",
-      "version": "$VERSION",
+      "version": "$ver",
       "description": "$descr",
       "author": "Aero Team",
       "download_url": "https://github.com/$REPO/releases/download/$VERSION/${name}.zip",

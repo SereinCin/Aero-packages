@@ -1,0 +1,65 @@
+// aero-bench
+// Minimal micro-benchmark helpers. The time() builtin returns wall-clock
+// seconds (libc time_t, 1s resolution), so benchmark loops should be long
+// enough to register. Format helpers turn raw counts into readable rates.
+
+// Wall-clock seconds since the epoch.
+fn bench_now() -> i64 {
+    return time();
+}
+
+// Run n iterations of a summing loop, print label / iters / elapsed
+// seconds / throughput. Returns the accumulated counter so the loop is
+// not optimised away.
+fn bench_loop(label: str, n: i64) -> i64 {
+    let t0 = time();
+    let acc = 0;
+    let i = 0;
+    while (i < n) {
+        acc = acc + i;
+        i = i + 1;
+    }
+    let seconds = time() - t0;
+    if (seconds <= 0) {
+        seconds = 1;
+    }
+    print("%s: %d iters in %d s (%s)\n", label, n, seconds, bench_throughput(n, seconds));
+    return acc;
+}
+
+// Elapsed milliseconds between two bench_now() samples.
+fn bench_elapsed_ms(start: i64) -> i64 {
+    return (time() - start) * 1000;
+}
+
+// count / seconds -> human-readable rate ("12M/s", "800K/s", "45/s").
+fn bench_throughput(count: i64, seconds: i64) -> str {
+    if (seconds <= 0) {
+        return format("%d/s", count);
+    }
+    let rate = count / seconds;
+    if (rate >= 1000000) {
+        return format("%dM/s", rate / 1000000);
+    }
+    if (rate >= 1000) {
+        return format("%dK/s", rate / 1000);
+    }
+    return format("%d/s", rate);
+}
+
+// Bytes -> "B / KB / MB / GB" (base 1024).
+fn bench_format_bytes(bytes: i64) -> str {
+    if (bytes < 1024) {
+        return format("%d B", bytes);
+    }
+    let kb = bytes / 1024;
+    if (kb < 1024) {
+        return format("%d KB", kb);
+    }
+    let mb = kb / 1024;
+    if (mb < 1024) {
+        return format("%d MB", mb);
+    }
+    let gb = mb / 1024;
+    return format("%d GB", gb);
+}
