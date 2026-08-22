@@ -1,0 +1,256 @@
+// aero-web: Web 框架（Router / Extract / Middleware），对标 Axum 核心概念（v1）。
+//
+// 概念映射：
+// - Router     → web_router_new / web_route / web_route_index / web_dispatch
+// - Extract    → web_param（路径参数 {id}）、web_query（查询参数 ?q=）
+// - Middleware → web_mw / web_mws / web_mw_id（before 链，可短路由）
+// - Serve      → web_serve_conn（处理一个已连接请求，走用户钩子）
+//
+// 用户钩子（在 main.aero 中定义，forward 引用）：
+//   fn web_handle(r: &Router, idx: i64, path: str, body: str) -> str
+//   fn web_middleware(id: i64, method: str, path: str) -> i32   // 0 继续，非 0 拦截(403)
+//
+// 依赖 aero-http（strcmp/parse/response 由它提供，勿重复声明 extern）。
+
+struct Route {
+    method: str,
+    pattern: str,
+    handler: i64,
+}
+
+struct Router {
+    methods: Vec<str>,
+    patterns: Vec<str>,
+    handlers: Vec<i64>,
+    mws: Vec<i64>,
+}
+
+// ---------- 基础工具 ----------
+
+// 从 from 起找 s 中等于 c 的字节下标；找不到返回 -1。
+fn web_find_byte(s: str, from: i64, c: i64) -> i64 {
+    let src = String::from(s);
+    let n = src.len();
+    let mut i = from;
+    while (i < n) {
+        if (src.at(i) == c) {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+// 返回 s 从 from 起下一个 '/' 的下标；没有则返回 len(s)。
+fn web_next_slash(s: str, from: i64) -> i64 {
+    let i = web_find_byte(s, from, 47);
+    if (i < 0) {
+        return len(s);
+    }
+    return i;
+}
+
+// 段是否为 {param} 通配符。
+fn web_is_wildcard(seg: str) -> i64 {
+    let n = len(seg);
+    if (n < 3) {
+        return 0;
+    }
+    let src = String::from(seg);
+    if (src.at(0) == 123 && src.at(n - 1) == 125) {
+        return 1;
+    }
+    return 0;
+}
+
+// ---------- 路由 ----------
+
+fn web_router_new() -> Router {
+    return Router { methods: Vec::new(), patterns: Vec::new(), handlers: Vec::new(), mws: Vec::new() };
+}
+
+// 注册一条路由：method + pattern（可含 {param}）+ handler id。
+fn web_route(r: &mut Router, method: str, pattern: str, handler: i64) {
+    r.methods.push(method);
+    r.patterns.push(pattern);
+    r.handlers.push(handler);
+}
+
+fn web_route_count(r: &Router) -> i64 {
+    return r.methods.len();
+}
+
+// 路径模式匹配：pattern 中 {x} 段匹配任意非空段，其余按字面比较。
+fn web_match_path(pattern: str, path: str) -> i64 {
+    let plen = len(pattern);
+    let slen = len(path);
+    let mut pp = 0;
+    let mut sp = 0;
+    while (pp <= plen && sp <= slen) {
+        let pe = web_next_slash(pattern, pp);
+        let se = web_next_slash(path, sp);
+        let pseg = substr(pattern, pp, pe);
+        let sseg = substr(path, sp, se);
+        if (web_is_wildcard(pseg) == 0) {
+            if (strcmp(pseg, sseg) != 0) {
+                return 0;
+            }
+        } else {
+            if (len(sseg) == 0) {
+                return 0;
+            }
+        }
+        pp = pe + 1;
+        sp = se + 1;
+        if (pp > plen && sp > slen) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+// 匹配路由下标；-1 = 未匹配。查询串（? 之后）不参与匹配。
+fn web_route_index(r: &Router, method: str, path: str) -> i64 {
+    let qpos = web_find_byte(path, 0, 63); // '?'
+    let base = path;
+    if (qpos >= 0) {
+        base = substr(path, 0, qpos);
+    }
+    let n = r.methods.len();
+    let mut i = 0;
+    while (i < n) {
+        if (strcmp(r.methods.get(i), method) == 0 && web_match_path(r.patterns.get(i), base) == 1) {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+// 便捷：返回匹配路由的 handler id；未匹配 -1。
+fn web_dispatch(r: &Router, method: str, path: str) -> i64 {
+    let idx = web_route_index(r, method, path);
+    if (idx < 0) {
+        return -1;
+    }
+    return r.handlers.get(idx);
+}
+
+fn web_handler(r: &Router, idx: i64) -> i64 {
+    return r.handlers.get(idx);
+}
+
+// ---------- Extract：路径参数 ----------
+
+// 提取匹配路由 idx 的第 pos 个 {param} 对应的路径段。
+fn web_param(r: &Router, idx: i64, path: str, pos: i64) -> str {
+    let pattern = r.patterns.get(idx);
+    let plen = len(pattern);
+    let slen = len(path);
+    let mut pp = 0;
+    let mut sp = 0;
+    let mut cur = 0;
+    while (pp <= plen && sp <= slen) {
+        let pe = web_next_slash(pattern, pp);
+        let se = web_next_slash(path, sp);
+        let pseg = substr(pattern, pp, pe);
+        if (web_is_wildcard(pseg) == 1) {
+            if (cur == pos) {
+                return substr(path, sp, se);
+            }
+            cur = cur + 1;
+        }
+        pp = pe + 1;
+        sp = se + 1;
+    }
+    return "";
+}
+
+// ---------- Extract：查询参数 ----------
+
+// 从 path（含 ?query）中取 key 对应的值。
+fn web_query(path: str, key: str) -> str {
+    let qpos = web_find_byte(path, 0, 63); // '?'
+    if (qpos < 0) {
+        return "";
+    }
+    let n = len(path);
+    let mut s = qpos + 1;
+    while (s < n) {
+        let amp = web_find_byte(path, s, 38); // '&'
+        let e = n;
+        if (amp >= 0) {
+            e = amp;
+        }
+        let eq = web_find_byte(path, s, 61); // '='
+        if (eq >= 0 && eq < e) {
+            let k = substr(path, s, eq);
+            if (strcmp(k, key) == 0) {
+                return substr(path, eq + 1, e);
+            }
+        }
+        if (amp < 0) {
+            break;
+        }
+        s = amp + 1;
+    }
+    return "";
+}
+
+// ---------- Middleware ----------
+
+// 追加一个中间件 id 到链尾。
+fn web_mw(r: &mut Router, id: i64) {
+    r.mws.push(id);
+}
+
+// 中间件数量。
+fn web_mws(r: &Router) -> i64 {
+    return r.mws.len();
+}
+
+// 第 i 个中间件 id。
+fn web_mw_id(r: &Router, i: i64) -> i64 {
+    return r.mws.get(i);
+}
+
+// ---------- Serve ----------
+
+// 处理一个已建立连接的 HTTP 请求：
+// recv → 解析 → 中间件（web_middleware 非 0 则 403）→ web_handle 生成 body → 响应。
+fn web_serve_conn(r: &Router, conn: i64) -> i32 {
+    let rmsg = http_recv_str(conn, 2048);
+    let req = http_parse_request(rmsg.data());
+    // 中间件链（before，可短路由）
+    let mn = web_mws(r);
+    let mut mi = 0;
+    while (mi < mn) {
+        let mid = web_mw_id(r, mi);
+        if (web_middleware(mid, req.method, req.path) != 0) {
+            let resp = http_response(403, "text/plain", "Forbidden");
+            tcp_send(conn, resp.data());
+            return 403;
+        }
+        mi = mi + 1;
+    }
+    // 路由分发
+    let idx = web_route_index(r, req.method, req.path);
+    if (idx < 0) {
+        let resp = http_response(404, "text/plain", "Not Found");
+        tcp_send(conn, resp.data());
+        return 404;
+    }
+    let body = web_handle(r, idx, req.path, req.body);
+    let resp = http_response(200, "text/plain", body);
+    tcp_send(conn, resp.data());
+    return 200;
+}
+
+// ---------- 冒烟测试（纯逻辑，不触网；经 aero test 单文件运行需外部 strcmp 声明） ----------
+
+fn test_web_match_path() {
+    print("m1=%lld m2=%lld m3=%lld\n",
+        web_match_path("/users/{id}", "/users/42"),
+        web_match_path("/users/{id}", "/users/42/x"),
+        web_match_path("/", "/"));
+}

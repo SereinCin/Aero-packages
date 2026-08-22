@@ -1,0 +1,226 @@
+// aero-redis: 纯 Aero RESP 客户端（v1）
+//
+// 设计要点（v1）：
+// - RESP 协议完全在 Aero 内实现（编码 + 解析），不依赖 C 库。
+// - 传输层走 aero-tcp（FFI socket），命令用 String 编码为 `*n\r\n$len\r\n...`。
+// - 解析支持 +OK / -ERR / :int / $bulk / *array（v1 返回类型 + 内容）。
+//
+// 限制（v1）：redis_read 单次 recv 读取响应，适合小值；大响应/多段需后续增强。
+
+struct RedisReply {
+    kind: i32,   // 0=simple, 1=error, 2=int, 3=bulk, 4=array, -1=unknown
+    value: str,
+    num: i64,
+}
+
+// ---------- 数字解析（i64 版） ----------
+
+// 把 ASCII 数字串转成 i64（支持负号；忽略非数字字符）。
+fn redis_atoi(s: str) -> i64 {
+    let src = String::from(s);
+    let n = src.len();
+    let mut v: i64 = 0;
+    let mut neg: i64 = 0;
+    let mut i = 0;
+    if (n > 0 && src.at(0) == 45) { // '-'
+        neg = 1;
+        i = 1;
+    }
+    while (i < n) {
+        let c = src.at(i);
+        if (c >= 48 && c <= 57) {
+            v = v * 10 + (c - 48);
+        }
+        i = i + 1;
+    }
+    if (neg == 1) {
+        return -v;
+    }
+    return v;
+}
+
+// ---------- 连接 ----------
+
+// 连接 Redis；返回 fd，-1 = 失败。需先 tcp_init（redis_connect 内部已初始化）。
+fn redis_connect(host: str, port: i32) -> i64 {
+    tcp_init();
+    let fd = tcp_socket();
+    if (fd < 0) {
+        return -1;
+    }
+    let cr = tcp_connect(fd, host, port);
+    if (cr != 0) {
+        tcp_close(fd);
+        return -1;
+    }
+    return fd;
+}
+
+fn redis_close(fd: i64) {
+    tcp_close(fd);
+    tcp_cleanup();
+}
+
+// ---------- RESP 编码 ----------
+
+// 发送 3 参数命令（如 SET key val）；返回 0 = 成功。
+fn redis_cmd3(fd: i64, cmd: str, key: str, val: str) -> i32 {
+    let mut req = String::new();
+    req.push_str("*3\r\n$");
+    req.push_str(format("%lld", len(cmd)));
+    req.push_str("\r\n");
+    req.push_str(cmd);
+    req.push_str("\r\n$");
+    req.push_str(format("%lld", len(key)));
+    req.push_str("\r\n");
+    req.push_str(key);
+    req.push_str("\r\n$");
+    req.push_str(format("%lld", len(val)));
+    req.push_str("\r\n");
+    req.push_str(val);
+    req.push_str("\r\n");
+    let r = tcp_send(fd, req.data());
+    if (r < 0) {
+        return -1;
+    }
+    return 0;
+}
+
+// 发送 2 参数命令（如 GET key）；返回 0 = 成功。
+fn redis_cmd2(fd: i64, cmd: str, key: str) -> i32 {
+    let mut req = String::new();
+    req.push_str("*2\r\n$");
+    req.push_str(format("%lld", len(cmd)));
+    req.push_str("\r\n");
+    req.push_str(cmd);
+    req.push_str("\r\n$");
+    req.push_str(format("%lld", len(key)));
+    req.push_str("\r\n");
+    req.push_str(key);
+    req.push_str("\r\n");
+    let r = tcp_send(fd, req.data());
+    if (r < 0) {
+        return -1;
+    }
+    return 0;
+}
+
+// ---------- RESP 解析 ----------
+
+// 解析响应首行之后的 bulk 内容（$len\r\ndata\r\n → data）。
+fn redis_parse_bulk(resp: str) -> str {
+    let crlf = http_find_sub(resp, 0, "\r\n");
+    if (crlf < 0) {
+        return "";
+    }
+    let n = redis_atoi(substr(resp, 1, crlf));
+    if (n < 0) {
+        return "";
+    }
+    return substr(resp, crlf + 2, crlf + 2 + n);
+}
+
+// 完整解析一个 RESP 响应。
+fn redis_parse(resp: str) -> RedisReply {
+    let src = String::from(resp);
+    let c = src.at(0);
+    if (c == 43) { // '+'
+        let e = http_find_sub(resp, 1, "\r\n");
+        return RedisReply { kind: 0, value: substr(resp, 1, e), num: 0 };
+    }
+    if (c == 45) { // '-'
+        let e = http_find_sub(resp, 1, "\r\n");
+        return RedisReply { kind: 1, value: substr(resp, 1, e), num: 0 };
+    }
+    if (c == 58) { // ':'
+        let e = http_find_sub(resp, 1, "\r\n");
+        return RedisReply { kind: 2, value: "", num: redis_atoi(substr(resp, 1, e)) };
+    }
+    if (c == 36) { // '$'
+        let crlf = http_find_sub(resp, 1, "\r\n");
+        let n = redis_atoi(substr(resp, 1, crlf));
+        if (n < 0) {
+            return RedisReply { kind: 3, value: "", num: -1 };
+        }
+        return RedisReply { kind: 3, value: substr(resp, crlf + 2, crlf + 2 + n), num: n };
+    }
+    if (c == 42) { // '*'
+        let crlf = http_find_sub(resp, 1, "\r\n");
+        return RedisReply { kind: 4, value: "", num: redis_atoi(substr(resp, 1, crlf)) };
+    }
+    return RedisReply { kind: -1, value: "", num: 0 };
+}
+
+// ---------- 读取 ----------
+
+// 读取并返回整个响应文本（v1：单次 recv）。
+fn redis_read(fd: i64) -> String {
+    return http_recv_str(fd, 4096);
+}
+
+// ---------- 高层 API ----------
+
+// SET key value → 0 = 成功，-1 = 失败。
+fn redis_set(fd: i64, key: str, value: str) -> i32 {
+    if (redis_cmd3(fd, "SET", key, value) != 0) {
+        return -1;
+    }
+    let resp = redis_read(fd);
+    let r = redis_parse(resp.data());
+    if (r.kind == 0 && strcmp(r.value, "OK") == 0) {
+        return 0;
+    }
+    return -1;
+}
+
+// GET key → 值（不存在/错误返回空串）。
+fn redis_get(fd: i64, key: str) -> str {
+    if (redis_cmd2(fd, "GET", key) != 0) {
+        return "";
+    }
+    let resp = redis_read(fd);
+    let r = redis_parse(resp.data());
+    if (r.kind == 3) {
+        return r.value;
+    }
+    return "";
+}
+
+// DEL key → 删除数量（-1 = 错误）。
+fn redis_del(fd: i64, key: str) -> i64 {
+    if (redis_cmd2(fd, "DEL", key) != 0) {
+        return -1;
+    }
+    let resp = redis_read(fd);
+    let r = redis_parse(resp.data());
+    if (r.kind == 2) {
+        return r.num;
+    }
+    return -1;
+}
+
+// INCR key → 自增后的新值（-1 = 错误）。
+fn redis_incr(fd: i64, key: str) -> i64 {
+    if (redis_cmd2(fd, "INCR", key) != 0) {
+        return -1;
+    }
+    let resp = redis_read(fd);
+    let r = redis_parse(resp.data());
+    if (r.kind == 2) {
+        return r.num;
+    }
+    return -1;
+}
+
+// ---------- 冒烟测试（纯 RESP 解析） ----------
+
+fn test_redis_parse() {
+    let r = redis_parse("+OK\r\n");
+    print("simple kind=%d val=%s\n", r.kind, r.value);
+    let r2 = redis_parse("$5\r\nhello\r\n");
+    print("bulk kind=%d val=%s num=%d\n", r2.kind, r2.value, r2.num);
+    let r3 = redis_parse(":42\r\n");
+    print("int kind=%d num=%d\n", r3.kind, r3.num);
+    let r4 = redis_parse("-ERR bad\r\n");
+    print("err kind=%d val=%s\n", r4.kind, r4.value);
+}

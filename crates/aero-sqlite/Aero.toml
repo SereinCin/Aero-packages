@@ -1,0 +1,13 @@
+[package]
+name = "aero-sqlite"
+version = "1.2.0"
+edition = "2024"
+license = "MIT"
+
+# FFI: 本包自带全部静态库（Windows x64），装完即用、无需额外系统依赖。
+#   - libaero_sqlite_shim.a : Aero 友好的 C shim（shim/aero_sqlite_shim.c 编译）
+#   - libsqlite3.a          : SQLite 完整实现（静态链接，无外部符号依赖）
+# lib_paths 为相对本包根目录的相对路径（工具链自动解析为绝对路径）。
+[link]
+libs = [":libaero_sqlite_shim.a", ":libsqlite3.a"]
+lib_paths = ["shim"]

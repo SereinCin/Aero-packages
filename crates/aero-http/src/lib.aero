@@ -1,0 +1,226 @@
+// aero-http: HTTP/1.1 基础库（v1）
+//
+// 设计要点（v1）：
+// - 纯字符串解析：请求行 / 头部 / 状态行，基于 substr + strcmp + String 字节访问。
+// - 响应构建：String 累加，Content-Length 用 format 计算。
+// - 客户端 http_get：aero-tcp 连接 → GET 请求 → 解析状态码。
+// - 服务端组合：在 demo/应用里用 aero-tcp + 本库的解析/构建函数组成 accept 循环。
+//
+// 注意：http_get / http_recv_str 依赖 aero-tcp 的 socket 函数（合并后同一作用域）。
+
+// ---------- 基础 FFI ----------
+// strcmp(a, b) -> i32（0 = 相等）
+extern "C" fn strcmp(a: str, b: str) -> i32;
+// atoi(s) -> i32
+extern "C" fn atoi(s: str) -> i32;
+
+// ---------- 字节/子串查找 ----------
+
+// 从 start 起找第一个等于 c 的字节下标；找不到返回 -1。
+fn http_find_byte(s: str, start: i64, c: i64) -> i64 {
+    let src = String::from(s);
+    let n = src.len();
+    let mut i = start;
+    while (i < n) {
+        let b = src.at(i);
+        if (b == c) {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+// 从 start 起找第一个等于 sub 的子串下标；找不到返回 -1。
+fn http_find_sub(s: str, start: i64, sub: str) -> i64 {
+    let n = len(s);
+    let m = len(sub);
+    let mut i = start;
+    while (i + m <= n) {
+        let part = substr(s, i, i + m);
+        if (strcmp(part, sub) == 0) {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+// ---------- 请求解析 ----------
+
+struct HttpRequest {
+    method: str,
+    path: str,
+    version: str,
+    body: str,
+}
+
+// 解析 HTTP/1.1 请求。body 为头部空行（\r\n\r\n）之后的内容。
+fn http_parse_request(s: str) -> HttpRequest {
+    let crlf = http_find_sub(s, 0, "\r\n");
+    let sp1 = http_find_byte(s, 0, 32);
+    let sp2 = http_find_byte(s, sp1 + 1, 32);
+    let method = substr(s, 0, sp1);
+    let path = substr(s, sp1 + 1, sp2);
+    let version = substr(s, sp2 + 1, crlf);
+    let body = "";
+    if (crlf >= 0) {
+        let hdr_end = http_find_sub(s, crlf + 2, "\r\n\r\n");
+        if (hdr_end >= 0) {
+            body = substr(s, hdr_end + 4, len(s));
+        }
+    }
+    return HttpRequest { method: method, path: path, version: version, body: body };
+}
+
+// 取指定头部值；不存在返回空串。
+fn http_header(s: str, name: str) -> str {
+    let n = len(s);
+    let mut i = 0;
+    while (i < n) {
+        let line_end = http_find_sub(s, i, "\r\n");
+        let e = line_end;
+        if (line_end < 0) {
+            e = n;
+        }
+        let colon = http_find_byte(s, i, 58); // ':'
+        if (colon >= 0 && colon < e) {
+            let key = substr(s, i, colon);
+            if (strcmp(key, name) == 0) {
+                // 跳过 "name: " 前缀
+                return substr(s, colon + 2, e);
+            }
+        }
+        if (line_end < 0) {
+            break;
+        }
+        i = line_end + 2;
+    }
+    return "";
+}
+
+// ---------- 响应构建 ----------
+
+// 状态码 → 原因短语。
+fn http_status_text(code: i32) -> str {
+    if (code == 200) { return "OK"; }
+    if (code == 201) { return "Created"; }
+    if (code == 204) { return "No Content"; }
+    if (code == 301) { return "Moved Permanently"; }
+    if (code == 400) { return "Bad Request"; }
+    if (code == 404) { return "Not Found"; }
+    if (code == 500) { return "Internal Server Error"; }
+    return "Unknown";
+}
+
+// 构建完整 HTTP/1.1 响应（含 Content-Length，Connection: close）。
+fn http_response(status: i32, content_type: str, body: str) -> String {
+    let blen = len(body);
+    let mut r = String::new();
+    r.push_str("HTTP/1.1 ");
+    r.push_str(format("%d", status));
+    r.push_str(" ");
+    r.push_str(http_status_text(status));
+    r.push_str("\r\nContent-Type: ");
+    r.push_str(content_type);
+    r.push_str("\r\nContent-Length: ");
+    r.push_str(format("%lld", blen));
+    r.push_str("\r\nConnection: close\r\n\r\n");
+    r.push_str(body);
+    return r;
+}
+
+// ---------- 状态行解析 ----------
+
+// 从响应文本解析状态码；格式 "HTTP/1.1 200 OK"。
+fn http_parse_status(s: str) -> i32 {
+    let sp1 = http_find_byte(s, 0, 32);
+    let sp2 = http_find_byte(s, sp1 + 1, 32);
+    let code_str = substr(s, sp1 + 1, sp2);
+    return atoi(code_str);
+}
+
+// ---------- 接收辅助 ----------
+
+// 从 socket 接收数据到 i32 缓冲，再逐字节提取成 NUL 结尾 String。
+// max 为最多接收的字节数（≤ 2048）。
+fn http_recv_str(fd: i64, max: i64) -> String {
+    let mut buf: [i32; 512] = [0; 512];
+    let n = tcp_recv(fd, buf, max);
+    let mut out = String::new();
+    let mut i: i32 = 0;
+    while (i < n) {
+        let idx = i / 4;
+        let el = buf[idx];
+        let rem = i % 4;
+        let byte: i32 = 0;
+        if (rem == 0) { byte = el & 255; }
+        if (rem == 1) { byte = (el >> 8) & 255; }
+        if (rem == 2) { byte = (el >> 16) & 255; }
+        if (rem == 3) { byte = (el >> 24) & 255; }
+        out.push(byte);
+        i = i + 1;
+    }
+    return out;
+}
+
+// ---------- 客户端 ----------
+
+// HTTP GET：返回状态码（200/404/...），连接失败返回 -1。
+fn http_get(host: str, port: i32, path: str) -> i32 {
+    let init = tcp_init();
+    let fd = tcp_socket();
+    if (fd < 0) {
+        tcp_cleanup();
+        return -1;
+    }
+    let cr = tcp_connect(fd, host, port);
+    if (cr != 0) {
+        tcp_close(fd);
+        tcp_cleanup();
+        return -1;
+    }
+    // 构造 GET 请求
+    let mut req = String::new();
+    req.push_str("GET ");
+    req.push_str(path);
+    req.push_str(" HTTP/1.1\r\nHost: ");
+    req.push_str(host);
+    req.push_str("\r\nConnection: close\r\n\r\n");
+    tcp_send(fd, req.data());
+    // 读取响应并解析状态码
+    let resp = http_recv_str(fd, 512);
+    let status = http_parse_status(resp.data());
+    tcp_close(fd);
+    tcp_cleanup();
+    return status;
+}
+
+// ---------- 冒烟测试（纯字符串，不触网） ----------
+
+fn test_http_parse_request() {
+    let req = http_parse_request("GET /index.html HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    print("method=%s path=%s version=%s\n", req.method, req.path, req.version);
+}
+
+fn test_http_find() {
+    let sp = http_find_byte("GET /x HTTP/1.1", 0, 32);
+    print("sp1=%lld\n", sp);
+    let crlf = http_find_sub("GET /x HTTP/1.1\r\nHost: a\r\n", 0, "\r\n");
+    print("crlf=%lld\n", crlf);
+}
+
+fn test_http_response_build() {
+    let r = http_response(200, "text/plain", "hello");
+    print("resp=%s\n", r.data());
+    r.free();
+}
+
+fn test_http_header() {
+    let h = http_header("Host: localhost\r\nAccept: */*\r\n\r\n", "Host");
+    print("host=%s\n", h);
+}
+
+fn test_http_status_text() {
+    print("t200=%s t404=%s\n", http_status_text(200), http_status_text(404));
+}

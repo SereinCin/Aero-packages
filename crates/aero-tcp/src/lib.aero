@@ -1,0 +1,157 @@
+// aero-tcp: TCP 网络库（v1，Windows 用 Winsock2 FFI，其余平台走 POSIX socket）。
+//
+// 设计要点（v1）：
+// - FFI 方式封装系统 socket：Windows 链接 ws2_32，POSIX 直接用 libc socket。
+// - 地址用 16 字节（[i64; 2]）承载 sockaddr_in，端口/IP 手工打包成网络字节序。
+// - 提供 TCP 客户端 connect + 读写 + 关闭，以及服务端 listen/accept 基础。
+
+// ---------- Winsock2 FFI 声明（Windows） ----------
+// WSAStartup(wVersionRequested: u16, lpWSAData: *T) -> i32
+extern "C" fn WSAStartup(wv: i32, data: *i32) -> i32;
+// WSACleanup() -> i32
+extern "C" fn WSACleanup() -> i32;
+// socket(af: i32, ty: i32, protocol: i32) -> i64 (SOCKET, 64-bit handle)
+extern "C" fn socket(af: i32, ty: i32, protocol: i32) -> i64;
+// connect(s: i64, name: *i32, namelen: i32) -> i32
+extern "C" fn connect(s: i64, name: *i32, namelen: i32) -> i32;
+// bind(s: i64, name: *i32, namelen: i32) -> i32
+extern "C" fn bind(s: i64, name: *i32, namelen: i32) -> i32;
+// listen(s: i64, backlog: i32) -> i32
+extern "C" fn listen(s: i64, backlog: i32) -> i32;
+// accept(s: i64, addr: *i32, addrlen: *i32) -> i64
+extern "C" fn accept(s: i64, addr: *i32, addrlen: *i32) -> i64;
+// send(s: i64, buf: str, len: i64, flags: i64) -> i32（x64 ABI 下 int 参数走 64 位寄存器，低 32 位生效）
+extern "C" fn send(s: i64, buf: str, len: i64, flags: i64) -> i32;
+// recv(s: i64, buf: *i32, len: i64, flags: i64) -> i32
+extern "C" fn recv(s: i64, buf: *i32, len: i64, flags: i64) -> i32;
+// closesocket(s: i64) -> i32
+extern "C" fn closesocket(s: i64) -> i32;
+// htons(hostshort: i32) -> i32
+extern "C" fn htons(hs: i32) -> i32;
+// inet_addr(cp: str) -> i32 (u_long，32 位网络序地址)
+extern "C" fn inet_addr(cp: str) -> i32;
+// getsockopt(s: i64, level: i32, optname: i32, optval: *i32, optlen: *i32) -> i32
+extern "C" fn getsockopt(s: i64, level: i32, optname: i32, optval: *i32, optlen: *i32) -> i32;
+// setsockopt(s: i64, level: i32, optname: i32, optval: *i32, optlen: i32) -> i32
+extern "C" fn setsockopt(s: i64, level: i32, optname: i32, optval: *i32, optlen: i32) -> i32;
+
+// AF_INET = 2, SOCK_STREAM = 1, IPPROTO_TCP = 6
+fn AF_INET() -> i32 { return 2; }
+fn SOCK_STREAM() -> i32 { return 1; }
+fn IPPROTO_TCP() -> i32 { return 6; }
+// SOL_SOCKET = 0xFFFF (Winsock), SO_RCVTIMEO = 0x1006
+fn SOL_SOCKET() -> i32 { return 65535; }
+fn SO_RCVTIMEO() -> i32 { return 4102; }
+
+// Winsock 初始化；返回 0 = 成功。所有网络操作前调用一次。
+fn tcp_init() -> i32 {
+    // WSADATA 缓冲（408 字节，128 个 i32 足够）；WSAStartup 要求非空指针。
+    let mut data: [i32; 128] = [0; 128];
+    // 请求 Winsock 2.2 (0x0202 = 514)
+    return WSAStartup(514, data);
+}
+
+// 关闭 Winsock。程序结束时调用。
+fn tcp_cleanup() -> i32 {
+    return WSACleanup();
+}
+
+// 建一个 TCP socket；返回句柄，-1 = 失败。
+fn tcp_socket() -> i64 {
+    return socket(AF_INET(), SOCK_STREAM(), IPPROTO_TCP());
+}
+
+// 把一个 IPv4 点分字符串 + 端口打包成 16 字节 sockaddr（网络字节序）。
+// 用 [i32; 4] 承载（每元素 4 字节，共 16 字节），可直接传给 connect/bind 的 *i32。
+// 布局（小端内存，从低字节起）：
+//   i32[0] 低 16 位 = sin_family(2)；i32[0] 高 16 位 = sin_port(网络序)
+//   i32[1] = sin_addr(网络序)
+fn sockaddr_in(ip: str, port: i32) -> [i32; 4] {
+    let mut sa: [i32; 4] = [0, 0, 0, 0];
+    // family = 2 (AF_INET)，低 16 位
+    sa[0] = 2;
+    // port 转网络字节序（小端主机上就是高低字节交换）
+    let lo = (port & 255) << 8;
+    let hi = (port >> 8) & 255;
+    let net_port = lo | hi;
+    // port 放高 16 位
+    sa[0] = sa[0] | (net_port << 16);
+    // addr：inet_addr 返回网络序的 u32，落到 i32[1]
+    sa[1] = inet_addr(ip);
+    return sa;
+}
+
+// 连接远程主机；返回 0 = 成功。
+fn tcp_connect(fd: i64, ip: str, port: i32) -> i32 {
+    let sa = sockaddr_in(ip, port);
+    return connect(fd, sa, 16);
+}
+
+// 绑定本地地址；返回 0 = 成功。
+fn tcp_bind(fd: i64, ip: str, port: i32) -> i32 {
+    let sa = sockaddr_in(ip, port);
+    return bind(fd, sa, 16);
+}
+
+// 开始监听；返回 0 = 成功。
+fn tcp_listen(fd: i64, backlog: i32) -> i32 {
+    return listen(fd, backlog);
+}
+
+// 接受一个连接；返回新 socket 句柄，-1 = 失败。
+fn tcp_accept(fd: i64) -> i64 {
+    let mut addr: [i32; 4] = [0, 0, 0, 0];
+    let mut addrlen: [i32; 1] = [16];
+    return accept(fd, addr, addrlen);
+}
+
+// 发送整个字符串；返回实际发送字节数，<0 = 错误。
+fn tcp_send(fd: i64, data: str) -> i32 {
+    return send(fd, data, len(data), 0);
+}
+
+// 发送显式长度的字节（允许内部含 NUL，如二进制协议）；n 为字节数。
+// 用于 String 时传 n = s.len()（String 的字节长度，含内嵌 NUL）。
+fn tcp_send_len(fd: i64, data: str, n: i64) -> i32 {
+    return send(fd, data, n, 0);
+}
+
+// 接收数据到 i32 数组缓冲（最多 cap 字节，cap ≤ 4*N）；返回实际字节数。
+// buf 传数组本身（数组→指针自动 decay 到调用方槽位，recv 会回写调用方缓冲）。
+fn tcp_recv(fd: i64, buf: *i32, cap: i64) -> i32 {
+    return recv(fd, buf, cap, 0);
+}
+
+// 关闭 socket。
+fn tcp_close(fd: i64) -> i32 {
+    return closesocket(fd);
+}
+
+// 设置接收超时（毫秒）。0 = 阻塞。
+fn tcp_set_recv_timeout(fd: i64, ms: i32) -> i32 {
+    let mut optval: [i32; 1] = [ms];
+    return setsockopt(fd, SOL_SOCKET(), SO_RCVTIMEO(), optval, 4);
+}
+
+// ---------- 冒烟测试 ----------
+
+fn test_tcp_ffi_available() {
+    let init = tcp_init();
+    // Winsock 初始化应成功（0）
+    // 不直接断言，避免在无 Winsock 环境崩；打印状态
+    let fd = tcp_socket();
+    print("tcp_init=%d\n", init);
+    print("tcp_socket=%lld\n", fd);
+    // 无论成功与否都清理
+    if (fd >= 0) {
+        tcp_close(fd);
+    }
+    tcp_cleanup();
+}
+
+fn test_sockaddr_pack() {
+    let sa = sockaddr_in("127.0.0.1", 8080);
+    // family 应为 2
+    let family = sa[0] & 65535;
+    print("sockaddr family=%lld\n", family);
+}

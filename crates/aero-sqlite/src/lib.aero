@@ -1,0 +1,67 @@
+// aero-sqlite: SQLite FFI 驱动（v1）
+//
+// 设计要点（v1）：
+// - 通过 C shim（shim/aero_sqlite_shim.c）封装 sqlite3：Aero FFI 无法返回 str、
+//   也没有 i8 指针类型，所有指针/文本处理放在 C 层。
+// - Aero 侧只接触 i64 句柄与文本缓冲：open 用 [i64;1] 输出缓冲；
+//   query 把结果写进 [i32;N] 缓冲再逐字节提取成字符串（与 aero-crypto 惯例一致）。
+// - 提供 open / exec（DDL·DML）/ query（SELECT → "a,b;c,d" 文本）/ close。
+//
+// 限制（v1）：exec 错误消息未捕获（仅返回码）；v2 可加参数绑定与错误消息。
+
+// sqlite3_open(const char*, sqlite3**) -> int
+extern "C" fn sqlite3_open(filename: str, ppdb: *i64) -> i32;
+// sqlite3_close(sqlite3*) -> int
+extern "C" fn sqlite3_close(db: i64) -> i32;
+// shim: ash_exec(db, sql, errbuf, errcap) -> 0 成功 / -1 失败
+extern "C" fn ash_exec(db: i64, sql: str, errbuf: *i32, errcap: i64) -> i64;
+// shim: ash_query(db, sql, outbuf, outcap) -> 写入字节数 / -1 失败
+extern "C" fn ash_query(db: i64, sql: str, outbuf: *i32, outcap: i64) -> i64;
+
+// 打开/创建数据库；返回句柄（i64），-1 = 失败。path 可为文件路径或 ":memory:"。
+fn sqlite_open(path: str) -> i64 {
+    let mut db: [i64; 1] = [0];
+    let rc = sqlite3_open(path, db);
+    if (rc != 0) {
+        return -1;
+    }
+    return db[0];
+}
+
+// 执行 DDL/DML（CREATE/INSERT/UPDATE/DELETE…）；0 = 成功，-1 = 失败。
+fn sqlite_exec(db: i64, sql: str) -> i32 {
+    let r = ash_exec(db, sql, 0, 0);
+    if (r == 0) {
+        return 0;
+    }
+    return -1;
+}
+
+// 执行 SELECT，返回 "a,b;c,d"（行用 ; 分隔，列用 , 分隔；空结果返回 ""）。
+fn sqlite_query(db: i64, sql: str) -> str {
+    let mut buf: [i32; 1024] = [0; 1024];
+    let n = ash_query(db, sql, buf, 4096);
+    if (n < 0) {
+        return "";
+    }
+    let mut out = String::new();
+    let mut i: i64 = 0;
+    while (i < n) {
+        let idx = i / 4;
+        let el = buf[idx];
+        let rem = i % 4;
+        let byte: i32 = 0;
+        if (rem == 0) { byte = el & 255; }
+        if (rem == 1) { byte = (el >> 8) & 255; }
+        if (rem == 2) { byte = (el >> 16) & 255; }
+        if (rem == 3) { byte = (el >> 24) & 255; }
+        out.push(byte);
+        i = i + 1;
+    }
+    return out.data();
+}
+
+// 关闭数据库；0 = 成功。
+fn sqlite_close(db: i64) -> i32 {
+    return sqlite3_close(db);
+}

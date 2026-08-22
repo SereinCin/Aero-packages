@@ -8,6 +8,8 @@
 #   3. 顺便计算每个 zip 的 SHA256 写入 packages.json（checksum 格式从开始就定好）
 #   4. 每个条目按当前 tag 自动填入 requires_aero（如 tag v1.2.0 -> ">=1.2.0"），
 #      `aero install` 会据此过滤掉与当前 Aero 版本不兼容的包
+#   5. 只打包**已提交到 git** 的 crate：开发中的 crate（未 git add）自动排除，
+#      不会把未验证代码发布出去（防坑3）
 #
 # 产物: dist/<name>.zip + dist/packages.json
 
@@ -22,15 +24,72 @@ mkdir -p "$DIST"
 
 echo "==> 打包版本: $VERSION"
 
-# ---- 读取 Aero.toml 的 [link].libs（FFI 系统库声明；空 = 纯 Aero）----
+# ---- 发布清单：仅已跟踪的 crate（git ls-files 判定），开发中 crate 自动排除 ----
+released_crates() {  # released_crates
+  local tracked
+  tracked="$(cd "$ROOT" && git ls-files 'crates/*/Aero.toml' | sed -E 's#crates/([^/]+)/Aero.toml#\1#')"
+  [ -n "$tracked" ] && echo "$tracked"
+}
+
+# ---- 读取 Aero.toml 的 [link].libs（FFI 系统库声明；空 = 纯 Aero/自包含）----
 # 防坑2: FFI 依赖的系统库必须在 Aero.toml 显式声明，并写入 packages.json 的 system_libs。
+# 注意: 以 ':' 开头的显式文件库（如 ":libaero_sqlite_shim.a"）由包自带目录
+#       （如 shim/）提供，不属于用户需要安装的系统库，因此过滤掉。
 system_libs() {  # system_libs <crate_dir>
   local toml="$1/Aero.toml"
   [ -f "$toml" ] || { echo ""; return; }
-  # 取 [link] 表下的 libs = [ "...", ... ]，提取逗号分隔的引号字符串
-  awk '/^\[link\]/{inlink=1; next} /^\[/{if(inlink) exit} inlink && /libs *=/{print}' "$toml" \
-    | sed -E 's/.*libs *= *\[(.*)\].*/\1/' | tr -d '"' | tr -d ' '
+  local out
+  out="$(
+    awk '/^\[link\]/{inlink=1; next} /^\[/{if(inlink) exit} inlink && /libs *=/{print}' "$toml" \
+      | sed -E 's/.*libs *= *\[(.*)\].*/\1/' | tr -d '"' \
+      | tr ',' '\n' \
+      | sed -E 's/^[[:space:]]*//; s/[[:space:]]*$//' \
+      | grep -v '^:' | grep -v '^$'
+  )"
+  if [ -z "$out" ]; then
+    echo ""
+  else
+    echo "$out" | tr '\n' ',' | sed 's/,$//'
+  fi
 }
+
+# ---- 读取 Aero.toml 的 [dependencies]（path 依赖名列表；空 = 无依赖）----
+# install 需要知道依赖树，以便递归下载整个依赖链。
+dependencies() {  # dependencies <crate_dir>
+  local toml="$1/Aero.toml"
+  [ -f "$toml" ] || { echo ""; return; }
+  # 取 [dependencies] 表到下一个 [ 表头之间，每行 "name = { path = ... }" 的名字
+  awk '/^\[dependencies\]/{indep=1; next} /^\[/{if(indep) exit} indep && /=/{print}' "$toml" \
+    | sed -E 's/ *=.*//' | tr -d ' ' | grep -v '^$'
+}
+
+# 输出依赖为 JSON 数组字符串（如 ["aero-tcp","aero-http"]）；无依赖输出空数组。
+# 注意: 不能把 while 放进管道子 shell（first 标志会在子 shell 里改不回来），
+#       必须用 here-string 在同一 shell 内循环。
+deps_json() {  # deps_json <crate_dir>
+  local deps; deps="$(dependencies "$1")"
+  if [ -z "$deps" ]; then
+    echo "[]"
+    return
+  fi
+  local out=""
+  local first=1
+  while IFS= read -r d; do
+    [ -n "$d" ] || continue
+    if [ "$first" = 1 ]; then
+      out="[\"$d\""
+      first=0
+    else
+      out="$out,\"$d\""
+    fi
+  done <<< "$deps"
+  if [ "$first" = 1 ]; then
+    echo "[]"
+  else
+    echo "$out]"
+  fi
+}
+
 
 # ---- 校验: 每个 crate 的 description / requires_aero 不能漏 ----
 desc() {
@@ -86,15 +145,21 @@ desc() {
     aero-zip)       echo "ZIP 归档" ;;
     aero-tar)       echo "TAR 归档" ;;
     aero-tls)       echo "TLS（OpenSSL FFI）" ;;
+    aero-tcp)       echo "TCP 网络库（Winsock2/POSIX）" ;;
+    aero-http)      echo "HTTP/1.1 客户端与服务端" ;;
+    aero-web)       echo "Web 框架（Router/中间件/Extract）" ;;
+    aero-redis)     echo "Redis 客户端（RESP 协议）" ;;
+    aero-postgres)  echo "PostgreSQL 客户端（PG v3 协议）" ;;
+    aero-sqlite)    echo "SQLite 驱动（FFI 自包含）" ;;
     *)              echo "" ;;
   esac
 }
 
-# 打包前校验：description 不能漏（防坑1）
+# 打包前校验：description 不能漏（防坑1）；仅校验发布清单内的 crate
 missing_desc=0
-for crate in "$ROOT"/crates/*/; do
-  [ -d "$crate" ] || continue
-  name="$(basename "$crate")"
+while IFS= read -r name; do
+  [ -n "$name" ] || continue
+  crate="$ROOT/crates/$name"
   if [ -z "$(desc "$name")" ]; then
     echo "ERROR: no description mapping for $name — add it to desc() in pack.sh" >&2
     missing_desc=1
@@ -104,7 +169,7 @@ for crate in "$ROOT"/crates/*/; do
     echo "ERROR: $name declares [link] system libs but has no README.md documenting them" >&2
     missing_desc=1
   fi
-done
+done < <(released_crates)
 if [ "$missing_desc" -ne 0 ]; then
   exit 1
 fi
@@ -127,15 +192,15 @@ with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
   fi
 }
 
-# ---- 打包所有 crate（进入目录打包，避免多一层 <name>/）----
+# ---- 打包所有已发布 crate（进入目录打包，避免多一层 <name>/）----
 CRATES=()
-for crate in "$ROOT"/crates/*/; do
-  [ -d "$crate" ] || continue
-  name="$(basename "$crate")"
+while IFS= read -r name; do
+  [ -n "$name" ] || continue
+  crate="$ROOT/crates/$name"
   CRATES+=("$name")
   make_zip "$DIST/${name}.zip" "$crate"
   echo "    OK ${name}.zip"
-done
+done < <(released_crates)
 
 # ---- 生成 packages.json（SHA256 + description + requires_aero + system_libs）----
 JSON="$DIST/packages.json"
@@ -155,6 +220,8 @@ JSON="$DIST/packages.json"
     ver="${VERSION#v}"
     # 防坑2: FFI 系统库写入 system_libs 字段（纯 Aero 为空）
     slibs="$(system_libs "$ROOT/crates/$name")"
+    # 依赖树写入 dependencies 字段（install 递归拉取依赖链）
+    deps="$(deps_json "$ROOT/crates/$name")"
     cat <<EOF
     {
       "name": "$name",
@@ -163,6 +230,7 @@ JSON="$DIST/packages.json"
       "description": "$descr",
       "author": "Aero Team",
       "system_libs": "$slibs",
+      "dependencies": $deps,
       "download_url": "https://github.com/$REPO/releases/download/$VERSION/${name}.zip",
       "checksum": "$checksum"
     }
@@ -188,6 +256,13 @@ while IFS= read -r name; do
     echo "ERROR: $name has empty description" >&2
     bad=1
   fi
+  # 依赖树校验: 每个 path 依赖必须在发布列表内（缺一个用户就会装挂）
+  for dep in $(dependencies "$ROOT/crates/$name"); do
+    if ! grep -q "\"name\": \"$dep\"" "$JSON"; then
+      echo "ERROR: $name depends on $dep, but $dep is not in packages.json" >&2
+      bad=1
+    fi
+  done
 done < <(printf '%s\n' "${CRATES[@]}")
 if [ "$bad" -ne 0 ]; then
   exit 1

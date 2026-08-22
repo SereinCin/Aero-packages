@@ -1,0 +1,9 @@
+[package]
+name = "aero-web"
+version = "1.2.0"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+aero-http = { path = "../aero-http" }
+aero-tcp = { path = "../aero-tcp" }

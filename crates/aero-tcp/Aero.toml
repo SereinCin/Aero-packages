@@ -1,0 +1,9 @@
+[package]
+name = "aero-tcp"
+version = "1.2.0"
+edition = "2024"
+license = "MIT"
+
+# FFI: Winsock2 系统库（Windows）；POSIX socket 是 libc 一部分（无需显式声明）。
+[link]
+libs = ["ws2_32"]

@@ -1,0 +1,173 @@
+// aero-postgres: PostgreSQL v3 wire 协议客户端（纯 Aero，v1）
+//
+// 设计要点（v1）：
+// - 纯 Aero 实现 PG v3 网络协议（无 FFI，走 aero-tcp）：
+//   - 启动：StartupMessage（协议 3.0，user/database）
+//   - 简单查询：'Q' 消息
+//   - 响应解析：RowDescription / DataRow / CommandComplete / ErrorResponse / ReadyForQuery
+// - 所有协议整数均为大端（网络字节序），手工打包/解析。
+// - 文本协议：数据列按文本（format=0）返回。
+//
+// 限制（v1）：不支持密码认证（md5/scram）；仅 trust 认证场景；单次 recv 读响应。
+
+struct PgResult {
+    nrows: i64,
+    text: str,   // "a,b;c,d"（行 ; 分隔，列 , 分隔）
+    err: str,
+}
+
+// ---------- 协议打包 ----------
+
+// 就地逐字节构造（String.push 保留 NUL；push_str/`+` 会按 NUL 截断，不能用于二进制）。
+
+// 启动消息：len(含自身+版本) + 版本 3.0 + user/database 参数。
+fn pg_startup(user: str, db: str) -> String {
+    let mut b = String::new();
+    let body_len = 5 + len(user) + 10 + len(db) + 21; // "user\0"=5, "\0database\0"=10, "\0client_encoding\0UTF8\0\0"=21
+    let total = body_len + 8; // 4(长度) + 4(版本) + body
+    b.push((total >> 24) & 255);
+    b.push((total >> 16) & 255);
+    b.push((total >> 8) & 255);
+    b.push(total & 255);
+    b.push(0); b.push(3); b.push(0); b.push(0); // 协议 3.0 = 0x00030000
+    b.push_str("user"); b.push(0);
+    b.push_str(user); b.push(0);
+    b.push_str("database"); b.push(0);
+    b.push_str(db); b.push(0);
+    b.push_str("client_encoding"); b.push(0);
+    b.push_str("UTF8"); b.push(0);
+    b.push(0);
+    return b;
+}
+
+// 简单查询消息：'Q' + len + sql\0。
+fn pg_query_msg(sql: str) -> String {
+    let mut b = String::new();
+    b.push(81); // 'Q'
+    let total = len(sql) + 5; // 1(type) + len(sql) + 1(NUL) + 4(len)
+    b.push((total >> 24) & 255);
+    b.push((total >> 16) & 255);
+    b.push((total >> 8) & 255);
+    b.push(total & 255);
+    b.push_str(sql);
+    b.push(0);
+    return b;
+}
+
+// ---------- 响应解析 ----------
+//
+// 注意：str/String 工具（String::from、substr、push_str、`+`）都按 strlen/NUL 截断，
+// 二进制协议数据必须直接从 String 用 .at(i) 逐字节读取，结果用 .push 逐字节构建。
+
+// 解析完整响应（可能含多个消息），组装 PgResult。
+fn pg_parse_response(resp: String) -> PgResult {
+    let n = resp.len();
+    let mut pos: i64 = 0;
+    let mut out = String::new();
+    let mut first = 1;
+    let mut nrows: i64 = 0;
+    let mut err = "";
+    while (pos + 5 <= n) {
+        let t = resp.at(pos);
+        let mlen = ((resp.at(pos + 1) << 24) | (resp.at(pos + 2) << 16) | (resp.at(pos + 3) << 8) | resp.at(pos + 4));
+        let pend = pos + mlen + 1; // 长度字段不含 type 字节
+        if (t == 68) { // 'D' DataRow
+            let ncols = ((resp.at(pos + 5) << 8) | resp.at(pos + 6));
+            let mut p = pos + 7;
+            let mut i = 0;
+            if (first == 0) {
+                out.push(59); // ';'
+            }
+            first = 0;
+            while (i < ncols) {
+                let clen = ((resp.at(p) << 24) | (resp.at(p + 1) << 16) | (resp.at(p + 2) << 8) | resp.at(p + 3));
+                p = p + 4;
+                if (i > 0) {
+                    out.push(44); // ','
+                }
+                if (clen >= 0) {
+                    let mut k = 0;
+                    while (k < clen) {
+                        out.push(resp.at(p + k));
+                        k = k + 1;
+                    }
+                    p = p + clen;
+                }
+                i = i + 1;
+            }
+            nrows = nrows + 1;
+        } else if (t == 69) { // 'E' ErrorResponse：找 'M' 字段
+            let mut p2 = pos + 5;
+            while (p2 < pend) {
+                let ft = resp.at(p2);
+                if (ft == 0) {
+                    break;
+                }
+                let mut q = p2 + 1;
+                while (q < pend && resp.at(q) != 0) {
+                    q = q + 1;
+                }
+                if (ft == 77) { // 'M' 消息字段
+                    let mut es = String::new();
+                    let mut k = p2 + 1;
+                    while (k < q) {
+                        es.push(resp.at(k));
+                        k = k + 1;
+                    }
+                    err = es.data();
+                }
+                p2 = q + 1;
+            }
+        }
+        pos = pend;
+    }
+    return PgResult { nrows: nrows, text: out.data(), err: err };
+}
+
+// ---------- 连接与查询 ----------
+
+// 仅建立 TCP 连接（握手由调用方用 pg_send_startup / pg_handshake 完成）。
+fn pg_connect(host: str, port: i32) -> i64 {
+    tcp_init();
+    let fd = tcp_socket();
+    if (fd < 0) {
+        return -1;
+    }
+    if (tcp_connect(fd, host, port) != 0) {
+        tcp_close(fd);
+        return -1;
+    }
+    return fd;
+}
+
+// 发送启动消息（二进制，含 NUL，用显式长度）。
+fn pg_send_startup(fd: i64, user: str, db: str) -> i32 {
+    let m = pg_startup(user, db);
+    return tcp_send_len(fd, m.data(), m.len());
+}
+
+// 发送简单查询（二进制，含 NUL，用显式长度）。
+fn pg_send_query(fd: i64, sql: str) -> i32 {
+    let m = pg_query_msg(sql);
+    return tcp_send_len(fd, m.data(), m.len());
+}
+
+// 读取并解析响应。
+fn pg_read_result(fd: i64) -> PgResult {
+    let resp = http_recv_str(fd, 8192);
+    return pg_parse_response(resp);
+}
+
+fn pg_close(fd: i64) {
+    tcp_close(fd);
+    tcp_cleanup();
+}
+
+// ---------- 冒烟测试（纯协议打包/解析） ----------
+
+fn test_pg_pack() {
+    let m = pg_startup("postgres", "mydb");
+    print("startup_len=%lld\n", m.len());
+    let q = pg_query_msg("SELECT 1");
+    print("query_len=%lld\n", q.len());
+}
